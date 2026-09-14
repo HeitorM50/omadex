@@ -87,6 +87,16 @@ class Sandbox:
                               for n, i in forms],
         })
 
+    def bump(self, agent, tokens):
+        """Soma tokens ao record, para o absorb ter delta real."""
+        f = os.path.join(self.usage, f'{agent}.json')
+        with open(f, encoding='utf-8') as h:
+            d = json.load(h)
+        m = d.setdefault('modelUsage', {}).setdefault('test-model', {})
+        m['outputTokens'] = m.get('outputTokens', 0) + tokens
+        with open(f, 'w', encoding='utf-8') as h:
+            json.dump(d, h)
+
     def put_record_limits(self, agent, limits):
         """Reescreve só os limites de um record, preservando o resto."""
         p = os.path.join(self.usage, f'{agent}.json')
@@ -516,6 +526,31 @@ with Sandbox() as sb:
     primeiro = sb.read('state.json')
     eq("gravou o instante", isinstance(primeiro.get('lastAbsorbAt'), int), True)
     eq("taxa inicial zero", primeiro.get('burnRate'), 0)
+
+
+print("\n--- a taxa mede o intervalo entre GANHOS, não entre absorções ---")
+# Os records do omarchy.agents só são regenerados a cada 900s, então o delta
+# chega em rajada. Medir contra a última absorção (a cada 60s) infla a taxa ~15x
+# e deixaria o humor travado em "no foco".
+with Sandbox() as sb:
+    ps = load_helper()
+    sb.put_companion()
+    sb.put_state(hatched=True, candySeeded=True)
+    ps.cmd_absorb(['0.3'])                    # marca a régua, sem ganho
+    s1 = sb.read('state.json')
+    eq("sem ganho, não marca instante de ganho", s1.get('lastGainAt', 0), 0)
+
+    sb.bump('claude', 60_000_000)
+    ps.cmd_absorb(['0.3'])                    # primeiro ganho: sem base, taxa 0
+    s2 = sb.read('state.json')
+    eq("primeiro ganho não tem intervalo", s2['burnRate'], 0)
+    eq("mas registra o instante", s2['lastGainAt'] > 0, True)
+
+    # Uma absorção SEM ganho no meio não pode reiniciar o cronômetro.
+    ps.cmd_absorb(['0.3'])
+    s3 = sb.read('state.json')
+    eq("absorção sem ganho preserva o instante", s3['lastGainAt'], s2['lastGainAt'])
+    eq("e não mexe na taxa", s3['burnRate'], s2['burnRate'])
 
 
 print(f"\n{fails} FALHA(S)" if fails else "\nTodos os testes passaram")

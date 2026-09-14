@@ -478,6 +478,7 @@ DEFAULT_STATE = {
     "eggTier": None,
     "burnRate": 0,
     "lastAbsorbAt": 0,
+    "lastGainAt": 0,
 }
 
 
@@ -617,10 +618,19 @@ def cmd_absorb(argv: list[str]) -> int:
                     # bicho tivesse sido aquilo o tempo todo.
                     reveal_requested = True
 
-        # Taxa de queima do intervalo desde a última absorção. Serve só para o
-        # humor do companion, então uma estimativa grosseira basta.
-        anterior = int(state.get("lastAbsorbAt") or 0)
-        state["burnRate"] = burn_rate(gained, now - anterior) if anterior else 0
+        # Taxa de queima, para o humor do companion.
+        #
+        # Mede o intervalo entre GANHOS, não entre absorções. Os records do
+        # omarchy.agents só são regenerados a cada 900s por padrão, então o delta
+        # chega em rajada; dividir pelo intervalo entre absorções (60s) infla a
+        # taxa ~15× e deixaria o companion permanentemente "no foco".
+        #
+        # Uma absorção sem ganho não mexe em nada: reiniciar o cronômetro ali
+        # faria o próximo ganho parecer instantâneo.
+        if gained > 0:
+            anterior = int(state.get("lastGainAt") or 0)
+            state["burnRate"] = burn_rate(gained, now - anterior) if anterior else 0
+            state["lastGainAt"] = now
         state["lastAbsorbAt"] = now
 
         # Candies por janela cheia. Roda a cada absorção, antes da escrita, e
