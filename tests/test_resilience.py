@@ -15,9 +15,9 @@ import tempfile
 import urllib.error
 
 PLUGIN = os.path.expanduser(
-    '~/.config/omarchy/plugins/io.github.heitorm50.poketokenbar/bin/poke-sync')
+    '~/.config/omarchy/plugins/io.github.heitorm50.omadex/bin/omadex-sync')
 REAL_USAGE = os.path.expanduser('~/.local/state/omarchy/agents/usage')
-MODULE = 'io.github.heitorm50.poketokenbar'
+MODULE = 'io.github.heitorm50.omadex'
 
 fails = 0
 

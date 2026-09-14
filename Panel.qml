@@ -16,7 +16,7 @@ import qs.Ui
 // tokens por dia e quebra por modelo já estão a um clique no bar.
 Panel {
   id: root
-  moduleName: "io.github.heitorm50.poketokenbar"
+  moduleName: "io.github.heitorm50.omadex"
   ipcTarget: ""
   manageIpc: false
 
@@ -38,9 +38,9 @@ Panel {
   readonly property var tabs: [
     { key: "companion", label: "Companion" },
     { key: "dex", label: "Pokédex" },
-    { key: "log", label: "Histórico" },
+    { key: "log", label: "History" },
     { key: "bag", label: "Bag" },
-    { key: "shop", label: "Loja" }
+    { key: "shop", label: "Shop" }
   ]
   property int tab: 0
 
@@ -201,8 +201,8 @@ Panel {
           width: parent.width
           textFormat: Text.PlainText
           text: root.tab === 0
-                ? "←/→ troca de aba · r reavalia · a abre os detalhes · Esc fecha"
-                : "←/→ troca de aba · 1-5 vai direto · Esc fecha"
+                ? "←/→ switch tab · r re-check · a open details · Esc close"
+                : "←/→ switch tab · 1-5 jump · Esc close"
           color: Qt.darker(root.contentForeground, 1.8)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

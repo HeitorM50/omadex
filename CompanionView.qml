@@ -49,9 +49,9 @@ Column {
     return Math.max(0, hatchThreshold - tokensIntoStage)
   }
   readonly property string nextLabel: {
-    if (!hatched) return "até chocar"
+    if (!hatched) return "to hatch"
     if (!progress) return ""
-    return progress.isFinalStage ? "até graduar" : "até evoluir"
+    return progress.isFinalStage ? "to graduate" : "to evolve"
   }
 
   readonly property var agentRows: {
@@ -210,7 +210,7 @@ Column {
         text: {
           var bits = [Balance.rarityLabel(root.rarity)]
           if (root.hatched && root.line.length > 1)
-            bits.push("estágio " + (root.stage + 1) + "/" + root.line.length)
+            bits.push("stage " + (root.stage + 1) + "/" + root.line.length)
           return bits.join("  ·  ")
         }
         color: Qt.darker(root.foreground, 1.4)
@@ -246,7 +246,7 @@ Column {
             id: boostLabel
             anchors.centerIn: parent
             textFormat: Text.PlainText
-            text: "2× crescimento"
+            text: "2× growth"
             color: Color.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -258,7 +258,7 @@ Column {
         width: parent.width
         visible: root.graduations > 0
         textFormat: Text.PlainText
-        text: root.graduations + (root.graduations === 1 ? " graduado" : " graduados")
+        text: root.graduations + (root.graduations === 1 ? " graduated" : " graduated")
         color: Qt.darker(root.foreground, 1.6)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -271,7 +271,7 @@ Column {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       iconText: "󰑐"
-      tooltipText: "Reavaliar o uso (r)"
+      tooltipText: "Re-check usage (r)"
       foreground: root.foreground
       onClicked: root.refreshRequested()
     }
@@ -318,8 +318,8 @@ Column {
                                 : root.tokensIntoStage
         var of = root.hatched ? (root.progress ? root.progress.threshold : 0)
                               : root.hatchThreshold
-        return Balance.formatTokens(into) + " de " + Balance.formatTokens(of)
-               + "  ·  " + Balance.formatTokens(root.lifetimeTokens) + " no total"
+        return Balance.formatTokens(into) + " of " + Balance.formatTokens(of)
+               + "  ·  " + Balance.formatTokens(root.lifetimeTokens) + " total"
       }
       color: Qt.darker(root.foreground, 1.5)
       font.family: root.fontFamily
@@ -335,7 +335,7 @@ Column {
     spacing: Style.space(6)
 
     PanelSectionHeader {
-      text: "Linha evolutiva"
+      text: "Evolution line"
       foreground: root.foreground
       fontFamily: root.fontFamily
     }
@@ -414,7 +414,7 @@ Column {
     spacing: Style.space(4)
 
     PanelSectionHeader {
-      text: "Agentes"
+      text: "Agents"
       foreground: root.foreground
       fontFamily: root.fontFamily
     }
@@ -445,7 +445,7 @@ Column {
           text: {
             var bits = []
             if (agentRow.modelData.today > 0)
-              bits.push(Balance.formatTokens(agentRow.modelData.today) + " hoje")
+              bits.push(Balance.formatTokens(agentRow.modelData.today) + " today")
             if (agentRow.modelData.percent >= 0)
               bits.push(Math.round(agentRow.modelData.percent * 100) + "%")
             return bits.length ? bits.join("  ·  ") : "—"

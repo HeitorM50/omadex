@@ -84,15 +84,15 @@ function progress(rarity, totalForms, stageIndex, tokensIntoStage, difficulty,
 }
 
 // A mutação da progressão (acumular deltas, avançar estágios, graduar) NÃO
-// vive aqui: é do `bin/poke-sync absorb`, o único escritor do state.json.
+// vive aqui: é do `bin/omadex-sync absorb`, o único escritor do state.json.
 // Duplicá-la em JS criaria duas implementações da mesma regra para divergir.
 // Este arquivo é matemática de leitura: limiares, progresso e formatação.
 
 // ---- Economia ------------------------------------------------------------
 //
 // Os preços têm de sair do MESMO lugar que o helper usa, senão a loja mostra um
-// número e o `poke-sync buy` cobra outro. Estas constantes são as mesmas de
-// bin/poke-sync, e tests/test_shop.mjs trava as duas listas no mesmo valor.
+// número e o `omadex-sync buy` cobra outro. Estas constantes são as mesmas de
+// bin/omadex-sync, e tests/test_shop.mjs trava as duas listas no mesmo valor.
 
 var RARE_CANDY_PRICE = 500000000
 var MINT_PRICE = 100000000
@@ -141,9 +141,9 @@ function itemLabel(key) {
     case "rareCandy": return "Rare Candy"
     case "mint": return "Mint"
     case "shinyCharm": return "Shiny Charm"
-    case "egg:": return "Ovo"
-    case "egg:uncommon": return "Ovo Incomum"
-    case "egg:rare": return "Ovo Raro"
+    case "egg:": return "Egg"
+    case "egg:uncommon": return "Uncommon Egg"
+    case "egg:rare": return "Rare Egg"
     default: return key
   }
 }
@@ -159,12 +159,12 @@ function itemGlyph(key) {
 
 function itemHint(key) {
   switch (key) {
-    case "rareCandy": return "+" + formatTokens(100000000) + " de crescimento"
-    case "mint": return "sorteia outra nature"
-    case "shinyCharm": return "chance de shiny 1/64 → 1/48, para sempre"
-    case "egg:": return "descarta o atual e começa de novo"
-    case "egg:uncommon": return "garante Incomum ou melhor"
-    case "egg:rare": return "garante Raro ou melhor"
+    case "rareCandy": return "+" + formatTokens(100000000) + " of growth"
+    case "mint": return "rerolls its nature"
+    case "shinyCharm": return "shiny odds 1/64 → 1/48, forever"
+    case "egg:": return "release the current one and start over"
+    case "egg:uncommon": return "guarantees Uncommon or better"
+    case "egg:rare": return "guarantees Rare or better"
     default: return ""
   }
 }
@@ -259,13 +259,13 @@ function mood(state, todayTokens, worstLimitPercent, recentEvent) {
 
 function moodLabel(m) {
   switch (m) {
-    case "egg": return "incubando"
-    case "working": return "trabalhando"
-    case "focus": return "no foco"
-    case "tired": return "cansado"
-    case "sleep": return "dormindo"
-    case "levelUp": return "cresceu!"
-    default: return "de boa"
+    case "egg": return "incubating"
+    case "working": return "working"
+    case "focus": return "focused"
+    case "tired": return "tired"
+    case "sleep": return "asleep"
+    case "levelUp": return "grew!"
+    default: return "idle"
   }
 }
 
@@ -284,10 +284,10 @@ function formatTokens(n) {
 
 function rarityLabel(rarity) {
   switch (rarity) {
-    case "legendary": return "Lendário"
-    case "rare": return "Raro"
-    case "uncommon": return "Incomum"
-    default: return "Comum"
+    case "legendary": return "Legendary"
+    case "rare": return "Rare"
+    case "uncommon": return "Uncommon"
+    default: return "Common"
   }
 }
 
@@ -317,31 +317,31 @@ function barTooltip(o) {
   var companion = String(d.companionName || "—")
 
   if (pinned) {
-    parts.push(pinned + " ★ fixado no bar")
+    parts.push(pinned + " ★ pinned to the bar")
     // "Companion:" nomeia de quem é o estágio. Sem esse prefixo o leitor
     // atribui o número à espécie da linha de cima.
     parts.push("Companion: " + companion
                + (d.hatched
                   ? "  ·  " + rarityLabel(d.rarity)
-                    + "  ·  estágio " + ((d.stage | 0) + 1) + "/" + Math.max(1, d.totalForms | 0)
+                    + "  ·  stage " + ((d.stage | 0) + 1) + "/" + Math.max(1, d.totalForms | 0)
                   : ""))
   } else {
     parts.push(companion)
     if (d.hatched) {
       parts.push(rarityLabel(d.rarity)
-                 + "  ·  estágio " + ((d.stage | 0) + 1) + "/" + Math.max(1, d.totalForms | 0))
+                 + "  ·  stage " + ((d.stage | 0) + 1) + "/" + Math.max(1, d.totalForms | 0))
     }
   }
 
   if (d.hatched) {
-    parts.push(formatTokens(d.remaining) + " tokens até "
-               + (d.isFinalStage ? "graduar" : "evoluir"))
+    parts.push(formatTokens(d.remaining) + " tokens to "
+               + (d.isFinalStage ? "graduate" : "evolve"))
   } else {
-    parts.push(formatTokens(d.hatchRemaining) + " tokens até chocar")
+    parts.push(formatTokens(d.hatchRemaining) + " tokens to hatch")
   }
 
   if ((Number(d.todayTokens) || 0) > 0)
-    parts.push("Hoje: " + formatTokens(d.todayTokens))
+    parts.push("Today: " + formatTokens(d.todayTokens))
 
   return parts.join("\n")
 }

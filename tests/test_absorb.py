@@ -2,9 +2,9 @@
 """Testa cmd_absorb contra os records reais, num XDG_STATE_HOME temporário."""
 import importlib.machinery, importlib.util, json, os, shutil, tempfile
 
-PLUGIN = os.path.expanduser('~/.config/omarchy/plugins/io.github.heitorm50.poketokenbar/bin/poke-sync')
+PLUGIN = os.path.expanduser('~/.config/omarchy/plugins/io.github.heitorm50.omadex/bin/omadex-sync')
 REAL = os.path.expanduser('~/.local/state/omarchy/agents/usage')
-MODULE = 'io.github.heitorm50.poketokenbar'
+MODULE = 'io.github.heitorm50.omadex'
 
 fails = 0
 def eq(label, got, want):

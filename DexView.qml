@@ -43,8 +43,8 @@ Column {
     width: parent.width
     textFormat: Text.PlainText
     text: {
-      if (root.stats.species === 0) return "Nenhuma espécie ainda"
-      var bits = [root.stats.species + (root.stats.species === 1 ? " espécie" : " espécies")]
+      if (root.stats.species === 0) return "No species yet"
+      var bits = [root.stats.species + (root.stats.species === 1 ? " species" : " species")]
       if (root.stats.shiny > 0) bits.push(root.stats.shiny + " ✨")
       return bits.join("  ·  ")
     }
@@ -57,8 +57,8 @@ Column {
     width: parent.width
     visible: root.cells.length === 0
     textFormat: Text.PlainText
-    text: "O Pokédex enche sozinho: cada espécie que o seu companion alcançar "
-          + "entra aqui e fica, mesmo depois de graduar."
+    text: "Your Pokédex fills itself: every species your companion reaches "
+          + "lands here and stays, even after it graduates."
     color: Qt.darker(root.foreground, 1.6)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
@@ -210,11 +210,11 @@ Column {
       text: {
         var c = root.hoveredCell
         if (!c) return " "
-        var bits = ["Nº " + c.id, Balance.speciesLabel(c.name)]
-        bits.push(c.count + (c.count === 1 ? " criado" : " criados"))
+        var bits = ["No. " + c.id, Balance.speciesLabel(c.name)]
+        bits.push(c.count + (c.count === 1 ? " raised" : " raised"))
         if (c.shiny) bits.push("✨")
-        if (c.shinySprite !== "" && c.sprite !== "") bits.push("clique alterna a arte")
-        bits.push(root.representativeSpeciesId === c.id ? "★ no bar" : "☆ fixa no bar")
+        if (c.shinySprite !== "" && c.sprite !== "") bits.push("click to swap artwork")
+        bits.push(root.representativeSpeciesId === c.id ? "★ on the bar" : "☆ pin to the bar")
         return bits.join("  ·  ")
       }
       color: Qt.darker(root.foreground, 1.4)

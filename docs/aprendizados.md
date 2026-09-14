@@ -83,7 +83,7 @@ componente de UI.
 O pior tempo perdido do projeto.
 
 Editei o `BarWidget.qml`, salvei, o journal registrou
-`Local plugin changed, reloading: io.github.heitorm50.poketokenbar` — e o código
+`Local plugin changed, reloading: io.github.heitorm50.omadex` — e o código
 antigo continuou rodando. `console.log` novo não aparecia. O `state.json` era
 escrito por uma versão que eu já tinha apagado do disco, sem lock, porque aquela
 versão escrevia direto do QML.

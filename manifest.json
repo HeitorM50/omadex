@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.heitorm50.poketokenbar",
-  "name": "PokeTokenBar for Omarchy",
+  "id": "io.github.heitorm50.omadex",
+  "name": "Omadex",
   "version": "0.1.0",
   "author": "HeitorM50",
   "license": "MIT",
-  "description": "Um Pokémon no bar que choca e evolui conforme você queima tokens de IA, lendo os records do omarchy.agents",
+  "description": "A creature in your bar that hatches and evolves as you burn AI coding tokens, reading the usage records omarchy.agents already collects",
   "kinds": [
     "bar-widget"
   ],
@@ -13,10 +13,11 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "PokeTokenBar",
-    "description": "Sprite animado que evolui com o uso de tokens dos seus agentes de IA, com a linha evolutiva e o progresso num popout.",
+    "displayName": "Omadex",
+    "description": "Animated sprite that evolves with your AI token usage, with a Pokédex, a catch log, Rare Candy from filled rate limits, and a token shop.",
     "category": "AI",
     "aliases": [
+      "omadex",
       "poketokenbar",
       "companion",
       "pokemon"
@@ -37,27 +38,27 @@
       {
         "key": "difficulty",
         "type": "real",
-        "label": "Dificuldade de crescimento",
+        "label": "Growth difficulty",
         "min": 0.1,
         "max": 2.0,
         "step": 0.1,
         "defaultValue": 0.3,
-        "description": "Multiplica os limiares de evolução. Abaixo de 1 evolui mais rápido. O padrão 0.3 é calibrado para ~50M tokens/dia; use 1.0 para o balanceamento original do PokeTokenBar (~253M/dia)."
+        "description": "Multiplies evolution thresholds. Below 1 grows faster. The 0.3 default is tuned for ~50M tokens/day; use 1.0 for the original PokeTokenBar balance (~253M/day)."
       },
       {
         "key": "shopDifficulty",
         "type": "real",
-        "label": "Preços da loja",
+        "label": "Shop prices",
         "min": 0.1,
         "max": 2.0,
         "step": 0.1,
         "defaultValue": 1.0,
-        "description": "Multiplica os preços da Loja, independente da dificuldade de crescimento. Abaixo de 1 fica mais barato."
+        "description": "Multiplies shop prices, independent of growth difficulty. Below 1 is cheaper."
       },
       {
         "key": "spriteSize",
         "type": "integer",
-        "label": "Tamanho do sprite no bar (px)",
+        "label": "Sprite size in the bar (px)",
         "min": 14,
         "max": 40,
         "step": 1,
@@ -66,41 +67,41 @@
       {
         "key": "showTokens",
         "type": "boolean",
-        "label": "Mostrar tokens de hoje ao lado do sprite",
+        "label": "Show today's tokens next to the sprite",
         "defaultValue": true
       },
       {
         "key": "showLimitPercent",
         "type": "boolean",
-        "label": "Mostrar % do limite mais apertado",
+        "label": "Show the tightest rate-limit percentage",
         "defaultValue": false
       },
       {
         "key": "seedFromExisting",
         "type": "boolean",
-        "label": "Contar o uso já registrado",
+        "label": "Count usage already recorded",
         "defaultValue": false,
-        "description": "Por padrão a contagem começa em zero, para o primeiro Pokémon não graduar instantaneamente. Ligue para que o total histórico já acumulado conte na progressão."
+        "description": "By default counting starts at zero, so the first creature does not graduate instantly. Turn on to let your existing lifetime total count toward progress."
       },
       {
         "key": "pollSeconds",
         "type": "integer",
-        "label": "Intervalo de reavaliação (segundos)",
+        "label": "Re-check interval (seconds)",
         "min": 15,
         "max": 900,
         "step": 15,
         "defaultValue": 60,
-        "description": "Rede de segurança: os records são observados por FileView e reagem na hora. Este timer só cobre o caso de uma escrita não gerar evento de arquivo."
+        "description": "Safety net: the usage records are watched by FileView and react immediately. This timer only covers a write that produces no file event."
       },
       {
         "key": "representativeSpeciesId",
         "type": "integer",
-        "label": "Pokémon fixado no bar",
+        "label": "Species pinned to the bar",
         "min": 0,
         "max": 649,
         "step": 1,
         "defaultValue": 0,
-        "description": "Número da Pokédex da espécie a mostrar no bar, independente do companion em criação. 0 segue o companion. Mais fácil pela estrela na célula do Pokédex."
+        "description": "Pokédex number of the species to show in the bar, independent of the companion you are raising. 0 follows the companion. Easier from the star on a Pokédex cell."
       }
     ]
   }

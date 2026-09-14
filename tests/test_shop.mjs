@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 
-const PLUGIN = join(homedir(), '.config/omarchy/plugins/io.github.heitorm50.poketokenbar')
+const PLUGIN = join(homedir(), '.config/omarchy/plugins/io.github.heitorm50.omadex')
 
 const dir = mkdtempSync(join(tmpdir(), 'ptb-shop-'))
 const shim = join(dir, 'balance.mjs')
@@ -125,8 +125,8 @@ const semPin = B.barTooltip({
   pinnedName: '', todayTokens: 64300000
 })
 eq('abre com o companion', semPin.split('\n')[0], 'Crawdaunt')
-eq('não menciona fixado', semPin.indexOf('fixado') === -1, true)
-eq('tem o estágio', semPin.indexOf('estágio 2/2') !== -1, true)
+eq('não menciona fixado', semPin.indexOf('pinned') === -1, true)
+eq('tem o estágio', semPin.indexOf('stage 2/2') !== -1, true)
 
 console.log('\n--- tooltip do bar: COM espécie fixada ---')
 // O bug: o bar mostrava o nome da fixada com o estágio do companion real, e
@@ -137,12 +137,12 @@ const comPin = B.barTooltip({
   pinnedName: 'Corphish', todayTokens: 64300000
 })
 const linhas = comPin.split('\n')
-eq('a primeira linha diz que é fixada', linhas[0], 'Corphish ★ fixado no bar')
+eq('a primeira linha diz que é fixada', linhas[0], 'Corphish ★ pinned to the bar')
 // O separador é "  ·  " (espaço duplo), como no resto do painel.
 eq('o estágio é atribuído ao companion, não à fixada',
-   linhas[1], 'Companion: Crawdaunt  ·  Comum  ·  estágio 2/2')
+   linhas[1], 'Companion: Crawdaunt  ·  Common  ·  stage 2/2')
 eq('a fixada NUNCA aparece colada num estágio',
-   /Corphish[^\n]*estágio/.test(comPin), false)
+   /Corphish[^\n]*stage/.test(comPin), false)
 eq('o progresso continua visível', comPin.indexOf('41.7M') !== -1, true)
 
 console.log('\n--- tooltip do bar: ovo ---')
@@ -151,8 +151,8 @@ const ovo = B.barTooltip({
   stage: 0, totalForms: 2, hatchRemaining: 1500000,
   pinnedName: '', todayTokens: 0
 })
-eq('fala de chocar', ovo.indexOf('até chocar') !== -1, true)
-eq('sem estágio', ovo.indexOf('estágio') === -1, true)
+eq('fala de chocar', ovo.indexOf('to hatch') !== -1, true)
+eq('sem estágio', ovo.indexOf('stage') === -1, true)
 
 console.log('\n--- tooltip do bar: ovo com espécie fixada ---')
 const ovoPin = B.barTooltip({
@@ -160,7 +160,7 @@ const ovoPin = B.barTooltip({
   stage: 0, totalForms: 1, hatchRemaining: 1500000,
   pinnedName: 'Pikachu', todayTokens: 0
 })
-eq('diz que é fixada', ovoPin.split('\n')[0], 'Pikachu ★ fixado no bar')
+eq('diz que é fixada', ovoPin.split('\n')[0], 'Pikachu ★ pinned to the bar')
 eq('e que o companion é um ovo',
    ovoPin.indexOf('Companion: Ovo') !== -1, true)
 

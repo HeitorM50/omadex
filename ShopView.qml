@@ -66,7 +66,7 @@ Column {
 
     Text {
       textFormat: Text.PlainText
-      text: "Carteira"
+      text: "Wallet"
       color: Qt.darker(root.foreground, 1.4)
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -78,7 +78,7 @@ Column {
   Text {
     width: parent.width
     textFormat: Text.PlainText
-    text: Balance.formatTokens(root.wallet) + " disponíveis"
+    text: Balance.formatTokens(root.wallet) + " available"
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.subtitle
@@ -88,7 +88,7 @@ Column {
   Text {
     width: parent.width
     textFormat: Text.PlainText
-    text: "Tudo o que você já queimou, menos o que já gastou."
+    text: "Everything you have burned, minus what you have spent."
     color: Qt.darker(root.foreground, 1.7)
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
@@ -170,12 +170,12 @@ Column {
           width: parent.width
           textFormat: Text.PlainText
           text: {
-            if (row.modelData.owned) return "já é seu"
-            if (row.modelData.isEgg && !root.hatched) return "você já está num ovo"
+            if (row.modelData.owned) return "already yours"
+            if (row.modelData.isEgg && !root.hatched) return "you are already on an egg"
             if (row.confirming)
               return root.shiny && row.modelData.isEgg
-                     ? "toque nova­mente — o atual é SHINY"
-                     : "toque novamente para confirmar"
+                     ? "tap again — the current one is SHINY"
+                     : "tap again to confirm"
             return row.modelData.hint
           }
           color: row.confirming ? Color.urgent : Qt.darker(root.foreground, 1.6)

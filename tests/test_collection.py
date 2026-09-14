@@ -12,7 +12,7 @@ import shutil
 import tempfile
 
 PLUGIN = os.path.expanduser(
-    '~/.config/omarchy/plugins/io.github.heitorm50.poketokenbar/bin/poke-sync')
+    '~/.config/omarchy/plugins/io.github.heitorm50.omadex/bin/omadex-sync')
 
 fails = 0
 

@@ -27,7 +27,7 @@ Column {
   Text {
     width: parent.width
     textFormat: Text.PlainText
-    text: root.rows.length === 0 ? "Bag vazia" : "Bag"
+    text: root.rows.length === 0 ? "Bag empty" : "Bag"
     color: Qt.darker(root.foreground, 1.4)
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
@@ -37,9 +37,8 @@ Column {
     width: parent.width
     visible: root.rows.length === 0
     textFormat: Text.PlainText
-    text: "Encher um limite de janela — 5 horas ou semanal — te dá Rare Candy. "
-          + "O momento em que você bate o teto passa a ser o momento em que seu "
-          + "Pokémon cresce."
+    text: "Filling a rate-limit window — 5-hour or weekly — hands you Rare Candy. "
+          + "The moment you hit the cap becomes the moment your Pokémon grows."
     color: Qt.darker(root.foreground, 1.6)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
@@ -103,8 +102,8 @@ Column {
           width: parent.width
           textFormat: Text.PlainText
           text: {
-            if (row.modelData.passive) return "ativo — " + row.modelData.hint
-            if (!root.hatched) return "espere o ovo chocar"
+            if (row.modelData.passive) return "active — " + row.modelData.hint
+            if (!root.hatched) return "wait for the egg to hatch"
             return row.modelData.hint
           }
           color: Qt.darker(root.foreground, 1.6)
@@ -122,7 +121,7 @@ Column {
         anchors.verticalCenter: parent.verticalCenter
         visible: !row.modelData.passive
         textFormat: Text.PlainText
-        text: "usar"
+        text: "use"
         color: row.usable ? root.foreground : Qt.darker(root.foreground, 1.9)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption

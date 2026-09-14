@@ -1,312 +1,327 @@
-# PokeTokenBar for Omarchy
+# Omadex
 
-Um Pokémon no bar do Omarchy que choca e evolui conforme você queima tokens de
-IA. Porte da camada de companion do
-[PokeTokenBar](https://github.com/chattymin/PokeTokenBar) (macOS) para um plugin
-Quickshell, lendo os dados que o `omarchy.agents` já coleta.
+A creature in your Omarchy bar that hatches and evolves as you burn AI coding
+tokens. A Pokédex, a catch log, Rare Candy for filling rate limits, and a shop
+that spends the tokens you have already used.
 
 ```
-󰪯  19.3M          ovo, com os tokens de hoje ao lado
-🦀 19.3M          depois de chocar, o sprite Gen-V animado
+🥚          an egg, incubating
+🦀 →        the animated Gen-V sprite once it hatches
 ```
 
-## Como funciona
+## Requires `omarchy.agents`
 
-O plugin **não coleta uso nenhum**. Os arquivos em
-`~/.local/state/omarchy/agents/usage/*.json` são um contrato público do
-`omarchy.agents` (`schemaVersion: 1`, documentado em
-`/usr/share/omarchy/shell/plugins/agents/README.md`), e este plugin é
-consumidor somente-leitura deles. Quem autentica nas APIs dos provedores e
-regenera os records é o `omarchy.agents`; aqui só somamos `modelUsage`.
+**Omadex collects no usage of its own.** It reads the records that the
+first-party `omarchy.agents` plugin writes to
+`~/.local/state/omarchy/agents/usage/*.json`.
 
-Isso é o que torna o porte viável: dos ~19.700 LOC de Swift do original, cerca
-de 7.000 são coletores de uso que o Omarchy já tem prontos e melhores.
+That plugin must be **enabled and have recorded usage** — which means you need
+at least one AI coding CLI (Claude Code, Codex, Fireworks) that has actually
+run. Until a record exists, Omadex shows an egg and never hatches. That is not
+a failure: there is simply nothing to grow on yet.
 
-### Progressão
+`omarchy.agents` ships with Omarchy and self-hides when no usage exists, so if
+you see its robot icon in your bar, you are ready.
 
-Portada de `PokemonBalance` (`CompanionModel.swift:104-127` do original):
+## Install
+
+```bash
+omarchy plugin add https://github.com/HeitorM50/omadex.git --enable
+```
+
+Then add it to the bar:
+
+```bash
+omarchy bar add io.github.heitorm50.omadex --section right
+```
+
+### Dependencies
+
+- **Python 3** — standard library only, no packages to install.
+- **Network** — on the first hatch of each species, to fetch its evolution chain
+  and sprites from PokéAPI. Cached afterwards; later hatches of a known species
+  need no network.
+- **`omarchy.agents`** enabled, with recorded usage. See above.
+
+## Remove
+
+```bash
+omarchy bar remove io.github.heitorm50.omadex
+omarchy plugin remove io.github.heitorm50.omadex
+```
+
+Your progress and the sprite cache are left behind on purpose, so a reinstall
+picks up where you left off. To erase them too:
+
+```bash
+rm -rf ~/.local/state/omarchy/io.github.heitorm50.omadex
+rm -rf ~/.cache/omarchy/io.github.heitorm50.omadex
+```
+
+Omadex writes nowhere else. The only change it makes to your Omarchy config is
+its own widget entry in `shell.json`, which `omarchy bar remove` takes out.
+
+## How it works
+
+The records are a public contract of `omarchy.agents` (`schemaVersion: 1`,
+documented at `/usr/share/omarchy/shell/plugins/agents/README.md`). Omadex is a
+read-only consumer: it never runs `omarchy-agent-usage-update` and never talks
+to the providers' APIs.
+
+### Progress
 
 | | Tokens |
 |---|---|
-| Ovo choca | 5M |
-| Graduação — comum | 750M |
-| Graduação — incomum | 1,875B |
-| Graduação — raro | 3B |
-| Graduação — lendário | 6B |
+| Egg hatches | 5M |
+| Graduation — common | 750M |
+| Graduation — uncommon | 1.875B |
+| Graduation — rare | 3B |
+| Graduation — legendary | 6B |
 
-O custo do estágio `i` (0-based) numa linha de `k` formas é
-`T · (i+1) / (k(k+1)/2)`. A soma sobre todos os estágios é exatamente `T`, então
-a graduação cai no total da raridade independente do tamanho da linha.
+The cost of stage `i` (0-based) in a `k`-form line is `T · (i+1) / (k(k+1)/2)`.
+The sum across all stages is exactly `T`, so graduation lands on the rarity's
+total no matter how long the line is.
 
-Tudo isso é multiplicado por `difficulty`. O padrão é **0.3**, não 1.0: o
-original é balanceado para ~253M tokens/dia, e em ~50M/dia uma graduação comum
-levaria uns 15 dias. Em 0.3 dá cerca de 5 dias. Use `1.0` para o balanceamento
-original.
+Everything is multiplied by `difficulty`, which defaults to **0.3**, not 1.0:
+the original is balanced for ~253M tokens/day, and at ~50M/day a common
+graduation would take about 15 days. At 0.3 it takes about 5. Use `1.0` for the
+original balance.
 
-A raridade vem do `capture_rate` da PokéAPI (`≤45` raro, `≤120` incomum, senão
-comum; `is_legendary`/`is_mythical` força lendário), e a chocagem é ponderada
-por esse mesmo número — na prática, lendário sai cerca de 1 em 95.
+Rarity comes from PokéAPI's `capture_rate` (`≤45` rare, `≤120` uncommon, else
+common; `is_legendary`/`is_mythical` forces legendary), and hatching is weighted
+by that same number — a legendary lands roughly 1 in 95. Lines you have already
+collected are weighted at half, so the Pokédex fills instead of repeating.
 
-### Pokédex e histórico
+### The counter only grows
 
-O popout tem três abas: **Companion** (o Pokémon de agora), **Pokédex** (uma
-célula por espécie já possuída) e **Histórico** (uma linha por indivíduo
-criado).
+The records are **not** a reliable lifetime total: the Codex collector only
+reads session files touched in the last 30 days, and the Fireworks one asks its
+billing API for 30 days. Summing `modelUsage` on every read would give a total
+that *shrinks* when sessions age out — and a creature that de-evolves.
 
-O Pokédex **não é um arquivo** — é projetado do histórico por `Collection.js`.
-Duas coleções persistidas dessincronizariam; uma não tem como.
+So Omadex keeps the last total seen per agent and accumulates only positive
+deltas. A record that shrinks, zeroes, or is rewritten contributes nothing,
+never negative.
 
-Uma espécie entra no dex assim que o companion a alcança, e fica para sempre.
-O dex registra espécies **alcançadas**, não a linha inteira: um Corphish que
-graduou sem evoluir não dá o Crawdaunt. É a diferença entre colecionar o que
-você criou e o que poderia ter criado.
+Counting starts at zero by default: on the first run your existing lifetime
+total only sets the ruler, so the first creature does not graduate instantly.
+Turn on `seedFromExisting` to let it count.
+
+### Pokédex and history
+
+The popout has five tabs: **Companion**, **Pokédex**, **History**, **Bag**, and
+**Shop**.
+
+The Pokédex is **not a file** — it is projected from the catch log. Two
+persisted collections would drift out of sync; one cannot.
+
+A species enters the dex the moment your companion reaches it, and stays
+forever. The dex records species **reached**, not the whole line: a creature
+that graduated without evolving does not grant its evolution. That is the
+difference between collecting what you raised and what you could have raised.
 
 ### Shiny
 
-Uma chocagem em **64** sai shiny. O 1/4096 dos jogos daria uma a cada algumas
-décadas no ritmo de uso real; o próprio PokeTokenBar já afrouxa a taxa.
+One hatch in **64** comes out shiny. A shiny keeps its colors through the whole
+evolution line, and the ✨ shows on the name, the history row, and the dex cell.
+On the cell it marks the *species*: it means "I have owned this one shiny", and
+it stays even while the cell shows the normal artwork. A species owned both ways
+swaps artwork on click.
 
-Um shiny mantém as cores por toda a linha evolutiva, e os sprites vêm das
-subpastas próprias da PokéAPI (`.../animated/shiny/<id>.gif`, com fallback para
-`.../shiny/<id>.png` e, se nem isso existir, para a arte normal — melhor um
-Pokémon com a cor errada que um sem arte).
+### Economy
 
-O ✨ aparece no nome do companion, na linha do histórico e na célula do dex.
-Na célula ele marca a **espécie**: quer dizer "já tive esta shiny alguma vez", e
-fica mesmo quando a célula está mostrando a arte normal. Uma espécie possuída
-nas duas versões pode alternar a arte no clique.
+The tokens you have already burned are currency: your wallet is the lifetime
+total minus what you have spent.
 
-O bar fica de fora de propósito: em 22px o sprite shiny já é a diferença
-visível, e mais um glifo só apertaria os vizinhos.
+Filling a rate-limit window pays **Rare Candy** — 5 for a weekly cap, 1 for a
+session cap. Using one injects 100M of growth. The moment you hit the ceiling
+becomes the moment your creature grows.
 
-### Economia
-
-Os tokens que você já queimou são moeda: a carteira é o total menos o que você
-já gastou. O popout tem **Bag** e **Loja**.
-
-Encher um limite de janela paga **Rare Candy** — 5 no semanal, 1 na sessão. Usar
-uma injeta 100M de crescimento. O momento em que você bate o teto passa a ser o
-momento em que o bicho cresce.
-
-A Loja é uma lista única em ordem de preço, com os valores do original:
-
-| | Preço | O que faz |
+| | Price | Effect |
 |---|---|---|
-| Mint | 100M | sorteia outra nature |
-| Rare Candy | 500M | +100M de crescimento |
-| Ovo | 1B | descarta o atual e começa de novo |
-| Ovo Incomum | 2,5B | garante Incomum ou melhor |
-| Shiny Charm | 3B | shiny 1/64 → 1/48, para sempre |
-| Ovo Raro | 4B | garante Raro ou melhor |
+| Mint | 100M | rerolls its nature |
+| Rare Candy | 500M | +100M of growth |
+| Egg | 1B | release the current one and start over |
+| Uncommon Egg | 2.5B | guarantees Uncommon or better |
+| Shiny Charm | 3B | shiny odds 1/64 → 1/48, forever |
+| Rare Egg | 4B | guarantees Rare or better |
 
-Dois números que parecem arbitrários e não são. A candy custa **5× o que
-entrega** porque os tokens servem de medidor de crescimento *e* de carteira;
-preço igual ao XP tornaria a compra um crescimento grátis. E os ovos com
-garantia são precificados pela razão da tabela de graduação, não pela de
-probabilidade — pela probabilidade, dois ovos incomuns bateriam um raro em
-todos os eixos e o grau superior viraria bem inferior.
+Two numbers that look arbitrary and are not. Rare Candy costs **5× what it
+delivers** because tokens serve as both the growth meter *and* the wallet;
+pricing it at its XP value would make buying it free growth. And graded eggs are
+priced off the graduation table, not off probability — by probability, two
+Uncommon Eggs would beat one Rare Egg on every axis and the higher tier would
+become strictly inferior.
 
-Comprar um ovo **libera** o companion atual: ele continua no Pokédex e no
-histórico com as formas que alcançou, mas não conta como graduação e não paga o
-bônus de 2×. O custo real é perder o progresso acumulado.
+Buying an egg **releases** your current creature: it stays in the Pokédex and
+history with the forms it reached, but does not count as a graduation and does
+not pay the 2× bonus. The real cost is losing the progress you had banked.
 
-### Ditto disfarçado
+### A creature that reacts
 
-Uma chocagem comum em 128, de linha com 2+ formas, é secretamente um Ditto. Ele
-se revela no lugar da primeira evolução. Enquanto disfarçado, **o shiny fica
-escondido** — revelar as duas coisas juntas é o ponto alto.
+Your companion reads your rhythm: idle, working, focused, tired near a limit,
+asleep with no usage. Hatching and evolving get a flash and a pop, and the egg
+wobbles from 90% of its threshold. A celebration is **stored**, so a hatch that
+happened while the popout was closed is still celebrated next time you open it.
 
-### Vida
+A line you have already graduated grows **2× faster**, with a capsule in the
+panel explaining why the bar is moving quickly.
 
-O companion reage ao seu ritmo: ocioso, trabalhando, no foco, cansado perto de
-um limite, dormindo sem uso. A taxa sai dos tokens por minuto entre duas
-absorções, com os cortes do original.
+And rarely — one common hatch in 128, on a line with two or more forms — what
+you are raising is secretly something else, and reveals itself instead of
+evolving. Its shiny stays hidden until then.
 
-Chocar e evoluir dão flash e pulo, e o ovo balança a partir de 90% do limiar. A
-celebração é **guardada**: uma chocagem que aconteceu com o popout fechado ainda
-é celebrada na próxima abertura.
+### Pinning a species to the bar
 
-Uma linha que você já graduou cresce **2× mais rápido**, com uma cápsula no
-painel explicando por que a barra anda ligeiro. E linhas já coletadas pesam
-metade no sorteio, para o Pokédex encher em vez de repetir.
+The star on a Pokédex cell pins that species to the bar, independent of the
+companion you are raising. The panel keeps showing the real creature and its
+progress — only the bar stops following, and a ★ on the sprite says so.
 
-### Pokémon fixado no bar
-
-A estrela na célula do Pokédex fixa aquela espécie no bar, independente do
-companion em criação. O painel continua mostrando o bicho real e o progresso
-dele — só o bar para de seguir.
-
-### O contador é monotônico
-
-Os records **não** servem como total histórico: o coletor do Codex só lê sessões
-tocadas nos últimos 30 dias e o do Fireworks pede 30 dias à API de billing.
-Somar `modelUsage` a cada leitura daria um total que encolhe quando sessões saem
-da janela — e um Pokémon que desevolui.
-
-Então guardamos o último total visto por agente e acumulamos só deltas
-positivos. Um record que encolhe, zera, ou é reescrito contribui zero, nunca
-negativo.
-
-Por padrão a contagem começa em zero: na primeira execução o histórico já gasto
-só marca a régua, para o primeiro Pokémon não graduar instantaneamente. Ligue
-`seedFromExisting` para que ele conte.
-
-## Arquitetura
+## Architecture
 
 ```
-BarWidget.qml     observa e orquestra; não escreve nada
-Panel.qml         casca do popout: abas, teclado, ciclo de vida
-CompanionView.qml \
-DexView.qml        > uma aba cada, apresentação pura
-CatchLogView.qml  /
-Balance.js        matemática de leitura (limiares, progresso, formatação)
-Collection.js     projeção do Pokédex sobre o histórico
-bin/poke-sync     o único escritor: PokéAPI, sprites e a progressão
+BarWidget.qml      watches and orchestrates; writes nothing
+Panel.qml          popout shell: tabs, keyboard, lifecycle
+CompanionView.qml  \
+DexView.qml         > one tab each, presentation only
+CatchLogView.qml   /
+BagView.qml        |
+ShopView.qml       /
+Balance.js         read-side math (thresholds, progress, prices, formatting)
+Collection.js      the Pokédex projection over the catch log
+bin/omadex-sync    the only writer: PokéAPI, sprites, and all state mutation
 ```
 
-A mutação do estado vive no helper, não no QML, porque **o bar instancia um
-widget por monitor**: dois widgets acumulando o mesmo delta contariam em dobro, e
-`state.json` teria dois escritores. Com a regra no helper, atrás de um `flock`, o
-número de monitores deixa de importar — e a lógica fica testável em Python em vez
-de espelhada entre o QML e um teste.
+State mutation lives in the helper, not in QML, because **the bar instantiates
+one widget per monitor**: two widgets accumulating the same delta would count it
+twice, and `state.json` would have two writers. With the rule in the helper,
+behind a `flock`, the number of monitors stops mattering — and the logic becomes
+testable in Python instead of mirrored between QML and a test.
 
-### Arquivos
+### Files written
 
-| Caminho | Escrito por |
+| Path | Written by |
 |---|---|
-| `~/.local/state/omarchy/<id>/state.json` | `poke-sync absorb` |
-| `~/.local/state/omarchy/<id>/companion.json` | `poke-sync hatch` |
-| `~/.local/state/omarchy/<id>/collection.json` | `poke-sync hatch` e `absorb` |
-| `~/.cache/omarchy/<id>/sprites/` | `poke-sync` |
-| `~/.cache/omarchy/<id>/base-species.json` | `poke-sync index` |
+| `~/.local/state/omarchy/<id>/state.json` | `omadex-sync absorb` |
+| `~/.local/state/omarchy/<id>/companion.json` | `omadex-sync hatch` |
+| `~/.local/state/omarchy/<id>/collection.json` | `absorb`, `hatch`, `buy`, `use` |
+| `~/.cache/omarchy/<id>/sprites/` | `omadex-sync` |
+| `~/.cache/omarchy/<id>/base-species.json` | `omadex-sync index` |
 
-### O helper
-
-```bash
-bin/poke-sync index              # reconstrói o índice das 329 espécies base
-bin/poke-sync hatch [raridade]   # sorteia uma espécie e resolve a linha
-bin/poke-sync sprites <ids...>   # (re)baixa sprites
-bin/poke-sync absorb <dif> [seed]  # acumula tokens e avança a progressão
-bin/poke-sync buy <item> <dif> [grau]   # compra (rareCandy|mint|shinyCharm|egg)
-bin/poke-sync use <item> <dif>          # usa da bag (rareCandy|mint)
-```
-
-Sprites são os GIFs animados Gen-V de
-`raw.githubusercontent.com/PokeAPI/sprites`, com fallback para o PNG estático
-quando a espécie não tem animação. Baixados uma vez e cacheados. O índice sai do
-GraphQL da PokéAPI (0,7s) com fallback REST (~60s) se ele estiver fora.
-
-### Testes
+### The helper
 
 ```bash
-tests/test_collection.py   # coleção e sorteio de shiny
-tests/test_absorb.py       # absorção e integração, contra os records reais
-tests/test_economy.py      # carteira, preços, candy, ovos, taxa de queima
-tests/test_ditto.py        # disfarce, shiny escondido, revelação
-tests/test_dex.mjs         # projeção do Pokédex, ownsSpecies, 2×
-tests/test_shop.mjs        # lista da loja, bag, humor, tooltip do bar
-tests/test_resilience.py   # o que acontece quando a rede falha no meio
+bin/omadex-sync index                   # rebuild the 329 base-species index
+bin/omadex-sync hatch [tier]            # roll a species and resolve its line
+bin/omadex-sync sprites <ids...>        # (re)download sprites
+bin/omadex-sync absorb <dif> [seed]     # accumulate tokens, advance progress
+bin/omadex-sync buy <item> <dif> [tier] # rareCandy|mint|shinyCharm|egg
+bin/omadex-sync use <item> <dif>        # rareCandy|mint
 ```
 
-404 asserções. As que mais importam:
+Sprites are the animated Gen-V GIFs from
+`raw.githubusercontent.com/PokeAPI/sprites`, falling back to the static PNG when
+a species has no animation. Downloaded once and cached. The species index comes
+from PokéAPI's GraphQL endpoint (0.7s) with a REST fallback (~60s) if it is
+down.
 
-- **Usar candy não aumenta a carteira** (`test_economy.py`): a carteira é
-  lifetime menos gasto, então somar o XP da candy ao lifetime faria de cada
-  candy uma máquina de dinheiro.
-- **A primeira execução não paga candy retroativa**: ligar a feature com o
-  semanal em 100% marcaria 5 candies de graça.
+## Interaction
 
-- **O record que encolhe** (`test_absorb.py`): `lifetimeTokens` não pode cair e
-  o estágio não pode regredir quando sessões saem da janela de 30 dias do
-  coletor do Codex.
-- **Duas chocagens seguidas** não deixam duas entradas abertas no histórico. Foi
-  este teste que revelou que `hatchedAt` — resolução de um segundo — não servia
-  como identidade de entrada.
-- **O ✨ só marca espécies alcançadas** (`test_dex.mjs`): um shiny que parou na
-  forma base não dá o brilho na evolução que ele nunca virou.
-- **O Ditto esconde o shiny até revelar** (`test_ditto.py` e `test_dex.mjs`), em
-  toda parte: bar, painel, Pokédex e histórico. A revelação não gradua a espécie
-  do disfarce.
-- **Rede caindo no meio de uma operação** (`test_resilience.py`) não deixa
-  graduação fantasma, entrada duplicada nem token cobrado sem entrega. Foi a
-  falta desta suíte que deixou esses três passarem por 349 asserções: todos os
-  outros stubs substituem a rede por funções que sempre funcionam.
-- **O limiar que a UI mostra é o que o helper cobra**, com e sem o bônus de 2×
-  (`test_shop.mjs`).
-
-Nenhum dos três toca a rede nem o seu estado real.
-
-## Interações
-
-- **Ícone no bar:** esquerda abre o painel, meio reavalia o uso.
-- **Painel:** `←`/`→` (ou `h`/`l`) trocam de aba, `1`/`2`/`3` vão direto a uma,
-  `r` reavalia, `a` abre o painel detalhado do `omarchy.agents`, Tab vai para o
-  painel vizinho, Esc fecha.
-- **Pokédex:** o hover mostra o detalhe embaixo da grade; clicar numa espécie
-  que você teve nas duas versões alterna entre a arte normal e a shiny.
-- **IPC:** `omarchy-shell io.github.heitorm50.poketokenbar <open|close|toggle|refresh|hatch|companion|dex|log|bag|shop>`
-  — as cinco últimas abrem direto numa aba, o que serve para um atalho de teclado.
+- **Bar icon:** left opens the panel, middle re-checks usage.
+- **Panel:** `←`/`→` (or `h`/`l`) switch tabs, `1`–`5` jump to one, `r`
+  re-checks, `a` opens the `omarchy.agents` panel, Tab moves to the neighbouring
+  bar popout, Esc closes.
+- **Pokédex:** hover shows the detail line below the grid; the star pins a
+  species to the bar; clicking a species you have owned both ways swaps the
+  artwork.
+- **IPC:** `omarchy-shell io.github.heitorm50.omadex <open|close|toggle|refresh|hatch|companion|dex|log|bag|shop>`
 
 ## Settings
 
-Em `~/.config/omarchy/shell.json`, na entrada do widget:
+In `~/.config/omarchy/shell.json`, in the widget's entry:
 
 ```bash
-omarchy bar set io.github.heitorm50.poketokenbar difficulty 1.0 --json
-omarchy bar set io.github.heitorm50.poketokenbar spriteSize 26 --json
+omarchy bar set io.github.heitorm50.omadex difficulty 1.0 --json
+omarchy bar set io.github.heitorm50.omadex showTokens false --json
 ```
 
-| Chave | Padrão | O que faz |
+| Key | Default | What it does |
 |---|---|---|
-| `difficulty` | `0.3` | Multiplica os limiares de crescimento. 0.1–2.0 |
-| `shopDifficulty` | `1.0` | Multiplica os preços da Loja, independente da de crescimento |
-| `representativeSpeciesId` | `0` | Espécie fixada no bar; 0 segue o companion |
-| `spriteSize` | `22` | Altura do sprite no bar, em px |
-| `showTokens` | `true` | Mostra os tokens de hoje ao lado do sprite |
-| `showLimitPercent` | `false` | Mostra o % do limite de janela mais apertado |
-| `seedFromExisting` | `false` | Conta o uso já registrado em vez de começar de zero |
-| `pollSeconds` | `60` | Rede de segurança; os records já são observados por evento |
+| `difficulty` | `0.3` | Multiplies growth thresholds, 0.1–2.0 |
+| `shopDifficulty` | `1.0` | Multiplies shop prices, independent of growth |
+| `spriteSize` | `22` | Sprite height in the bar, in px |
+| `showTokens` | `true` | Show today's tokens next to the sprite |
+| `showLimitPercent` | `false` | Show the tightest rate-limit percentage |
+| `seedFromExisting` | `false` | Count usage already recorded |
+| `representativeSpeciesId` | `0` | Species pinned to the bar; 0 follows the companion |
+| `pollSeconds` | `60` | Safety net; records are already watched by event |
 
-## Instalação
+## Tests
 
 ```bash
-git clone <repo> ~/.config/omarchy/plugins/io.github.heitorm50.poketokenbar
-omarchy bar add io.github.heitorm50.poketokenbar --section right
+tests/test_collection.py   # collection and the shiny roll
+tests/test_absorb.py       # accumulation and integration, against real records
+tests/test_economy.py      # wallet, prices, candy, eggs, burn rate
+tests/test_ditto.py        # the disguise, the hidden shiny, the reveal
+tests/test_resilience.py   # what happens when the network fails mid-operation
+tests/test_dex.mjs         # the Pokédex projection, ownership, the 2× bonus
+tests/test_shop.mjs        # shop list, bag, mood, bar tooltip
 ```
 
-Precisa de Python 3 (só a stdlib) e de rede na primeira chocagem de cada
-espécie.
+404 assertions. The ones that matter most:
 
-### Ao editar o plugin
+- **Using a candy does not grow your wallet** (`test_economy.py`): the wallet is
+  lifetime minus spent, so adding candy XP to lifetime would make every candy a
+  money printer.
+- **The first run pays no retroactive candy**: enabling the feature with a
+  weekly cap already at 100% would hand out 5 free candies.
+- **A record that shrinks** (`test_absorb.py`): the lifetime total must not fall
+  and the stage must not regress when sessions age out of the Codex collector's
+  30-day window.
+- **Two hatches in the same second** do not leave two open history entries. That
+  test is what revealed `hatchedAt` — one-second resolution — was unusable as an
+  entry identity.
+- **The ✨ marks only species actually reached** (`test_dex.mjs`), and stays
+  hidden while a disguise is in play, everywhere: bar, panel, dex, and history.
+- **A network failure mid-operation** (`test_resilience.py`) leaves no phantom
+  graduation, no duplicate entry, and no token charged without delivery. The
+  absence of this suite is what let three of those through 349 assertions:
+  every other stub replaces the network with functions that always succeed.
+- **The threshold the UI shows is the one the helper charges**, with and without
+  the 2× bonus (`test_shop.mjs`).
 
-Salvar um arquivo sob `~/.config/omarchy/plugins/` recarrega o plugin, mas o
-engine QML mantém um cache de componentes que **nem o hot-reload nem
-`omarchy-shell shell rescanPlugins` limpam de forma confiável**. Uma mudança em
-`BarWidget.qml` ou `Panel.qml` pode continuar rodando a versão antiga sem
-nenhum aviso — o sintoma é código novo que claramente não executa. Para ter
-certeza de estar testando o que está em disco:
+None of them touch the network or your real state.
+
+### Editing the plugin
+
+Saving a file under `~/.config/omarchy/plugins/` reloads the plugin, but the QML
+engine keeps a component cache that **neither the hot-reload nor
+`omarchy-shell shell rescanPlugins` clears reliably**. A change to a `.qml` file
+can keep running the old version with no warning at all — the symptom is new
+code that plainly does not execute. To be sure you are testing what is on disk:
 
 ```bash
 omarchy restart shell
 ```
 
-## Documentação
+## Credit and scope
 
-- [`CLAUDE.md`](CLAUDE.md) — invariantes de arquitetura e as armadilhas do
-  ambiente, para quem (ou o que) for mexer no código.
-- [`docs/aprendizados.md`](docs/aprendizados.md) — o que só ficou claro
-  construindo: o dado de terceiros que não era cumulativo, o widget que não era
-  único, o cache invisível de QML.
+The idea, the token balance, and the companion mechanics come from
+**PokeTokenBar** by [chattymin](https://github.com/chattymin/PokeTokenBar)
+(MIT), a native macOS app with no Linux port. This plugin reimplements that
+layer for Omarchy's Quickshell, reading `omarchy.agents` records instead of
+collecting usage itself.
 
-## Crédito e escopo
+Left out on purpose: per-individual profiles (IVs, abilities, moves), the
+floating desktop pet, and per-day cost in dollars — the records carry no cost
+field, and reimplementing a per-model price table would go stale on its own.
+Token charts, per-model breakdowns and rate-limit detail are left to
+`omarchy.agents`, which already draws them one click away in the bar.
 
-A ideia, o balanceamento de tokens e a mecânica de companion são do
-**PokeTokenBar** de [chattymin](https://github.com/chattymin/PokeTokenBar)
-(MIT). Este plugin reimplementa só a fatia do mascote — choca, evolui, gradua.
-Ficaram de fora, e podem virar uma fase 2 sobre a mesma base de estado: loja,
-Pokédex, catch log, shiny, natures, Rare Candy por limite batido e o pet
-flutuante no desktop.
+Unofficial, non-commercial fan project. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — nothing third-party is
+bundled in this repository.
 
-Projeto de fã, não-comercial e não oficial. Pokémon é marca registrada da
-Nintendo / Creatures Inc. / GAME FREAK inc. Sprites e dados vêm da
-[PokéAPI](https://pokeapi.co/). Ver `NOTICE.md`.
+## License
+
+MIT, see [LICENSE](LICENSE).
