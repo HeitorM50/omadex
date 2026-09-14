@@ -84,15 +84,15 @@ function progress(rarity, totalForms, stageIndex, tokensIntoStage, difficulty,
 }
 
 // A mutação da progressão (acumular deltas, avançar estágios, graduar) NÃO
-// vive aqui: é do `bin/omadex-sync absorb`, o único escritor do state.json.
+// vive aqui: é do `bin/omapkdex-sync absorb`, o único escritor do state.json.
 // Duplicá-la em JS criaria duas implementações da mesma regra para divergir.
 // Este arquivo é matemática de leitura: limiares, progresso e formatação.
 
 // ---- Economia ------------------------------------------------------------
 //
 // Os preços têm de sair do MESMO lugar que o helper usa, senão a loja mostra um
-// número e o `omadex-sync buy` cobra outro. Estas constantes são as mesmas de
-// bin/omadex-sync, e tests/test_shop.mjs trava as duas listas no mesmo valor.
+// número e o `omapkdex-sync buy` cobra outro. Estas constantes são as mesmas de
+// bin/omapkdex-sync, e tests/test_shop.mjs trava as duas listas no mesmo valor.
 
 var RARE_CANDY_PRICE = 500000000
 var MINT_PRICE = 100000000

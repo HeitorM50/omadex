@@ -33,7 +33,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-MODULE = "io.github.heitorm50.omadex"
+MODULE = "io.github.heitorm50.omapkdex"
 
 API = "https://pokeapi.co/api/v2"
 SPRITES = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon"
@@ -1299,7 +1299,7 @@ def cmd_hatch(argv: list[str]) -> int:
 
 def cmd_sprites(argv: list[str]) -> int:
     if not argv:
-        log("uso: omadex-sync sprites <id> [id...]")
+        log("uso: omapkdex-sync sprites <id> [id...]")
         return 2
     for raw in argv:
         if not raw.isdigit():
@@ -1366,7 +1366,7 @@ def _with_state_lock(fn, after=None):
 def cmd_buy(argv: list[str]) -> int:
     """buy <rareCandy|mint|shinyCharm|egg> <shopDifficulty> [grau]"""
     if not argv:
-        log("uso: omadex-sync buy <item|egg> <shopDifficulty> [grau]")
+        log("uso: omapkdex-sync buy <item|egg> <shopDifficulty> [grau]")
         return 2
     what = argv[0]
     shop_difficulty = clamp_difficulty(argv[1] if len(argv) > 1 else DIFFICULTY_DEFAULT)
@@ -1456,7 +1456,7 @@ def cmd_buy(argv: list[str]) -> int:
 def cmd_use(argv: list[str]) -> int:
     """use <rareCandy|mint> <growthDifficulty>"""
     if not argv:
-        log("uso: omadex-sync use <rareCandy|mint> <growthDifficulty>")
+        log("uso: omapkdex-sync use <rareCandy|mint> <growthDifficulty>")
         return 2
     what = argv[0]
     difficulty = clamp_difficulty(argv[1] if len(argv) > 1 else DIFFICULTY_DEFAULT)

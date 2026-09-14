@@ -9,7 +9,7 @@ import "Collection.js" as Collection
 // Sprite do companion no bar, e host do popout.
 //
 // Este widget observa e orquestra; não muta nada. Quem acumula tokens, avança
-// estágios e escreve state.json é `bin/omadex-sync absorb`, disparado aqui por
+// estágios e escreve state.json é `bin/omapkdex-sync absorb`, disparado aqui por
 // timer. O motivo é que o bar instancia um widget por monitor: dois widgets
 // acumulando o mesmo delta contariam em dobro, e o arquivo teria dois
 // escritores. Com a mutação no helper, atrás de um flock, o número de monitores
@@ -23,7 +23,7 @@ import "Collection.js" as Collection
 // provedores. Quem atualiza os records é o timer do omarchy.agents.
 BarWidget {
   id: root
-  moduleName: "io.github.heitorm50.omadex"
+  moduleName: "io.github.heitorm50.omapkdex"
 
   // Nenhuma propriedade de caminho é injetada nos slots de bar-widget, então o
   // diretório do plugin tem de ser recuperado da URL deste arquivo.
@@ -409,8 +409,8 @@ BarWidget {
   Process {
     id: absorbProc
     command: root.seedFromExisting
-             ? [root.pluginDir + "/bin/omadex-sync", "absorb", String(root.difficulty), "seed"]
-             : [root.pluginDir + "/bin/omadex-sync", "absorb", String(root.difficulty)]
+             ? [root.pluginDir + "/bin/omapkdex-sync", "absorb", String(root.difficulty), "seed"]
+             : [root.pluginDir + "/bin/omapkdex-sync", "absorb", String(root.difficulty)]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     // O helper escreve state.json e, quando precisa, companion.json; os
@@ -423,7 +423,7 @@ BarWidget {
     id: buyProc
     property string key: ""
     property string tier: ""
-    command: [root.pluginDir + "/bin/omadex-sync", "buy", key,
+    command: [root.pluginDir + "/bin/omapkdex-sync", "buy", key,
               String(root.shopDifficulty)].concat(tier ? [tier] : [])
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
@@ -436,7 +436,7 @@ BarWidget {
   Process {
     id: useProc
     property string key: ""
-    command: [root.pluginDir + "/bin/omadex-sync", "use", key, String(root.difficulty)]
+    command: [root.pluginDir + "/bin/omapkdex-sync", "use", key, String(root.difficulty)]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function (code) {
@@ -459,7 +459,7 @@ BarWidget {
 
   Process {
     id: hatchProc
-    command: [root.pluginDir + "/bin/omadex-sync", "hatch"]
+    command: [root.pluginDir + "/bin/omapkdex-sync", "hatch"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
   }
@@ -492,7 +492,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "io.github.heitorm50.omadex"
+    target: "io.github.heitorm50.omapkdex"
 
     function open(): void { root.open() }
     function close(): void { root.close() }

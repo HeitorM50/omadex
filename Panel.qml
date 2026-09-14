@@ -16,7 +16,7 @@ import qs.Ui
 // tokens por dia e quebra por modelo já estão a um clique no bar.
 Panel {
   id: root
-  moduleName: "io.github.heitorm50.omadex"
+  moduleName: "io.github.heitorm50.omapkdex"
   ipcTarget: ""
   manageIpc: false
 

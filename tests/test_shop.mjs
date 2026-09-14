@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 
-const PLUGIN = join(homedir(), '.config/omarchy/plugins/io.github.heitorm50.omadex')
+const PLUGIN = join(homedir(), '.config/omarchy/plugins/io.github.heitorm50.omapkdex')
 
 const dir = mkdtempSync(join(tmpdir(), 'ptb-shop-'))
 const shim = join(dir, 'balance.mjs')

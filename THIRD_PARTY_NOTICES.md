@@ -4,7 +4,7 @@
 
 This repository contains no third-party code, data, or images. Every species,
 evolution chain, and sprite is fetched over the network the first time it is
-needed and cached under `~/.cache/omarchy/io.github.heitorm50.omadex/`. No API
+needed and cached under `~/.cache/omarchy/io.github.heitorm50.omapkdex/`. No API
 key or account is required.
 
 ## PokéAPI

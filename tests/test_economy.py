@@ -15,9 +15,9 @@ import shutil
 import tempfile
 
 PLUGIN = os.path.expanduser(
-    '~/.config/omarchy/plugins/io.github.heitorm50.omadex/bin/omadex-sync')
+    '~/.config/omarchy/plugins/io.github.heitorm50.omapkdex/bin/omapkdex-sync')
 REAL_USAGE = os.path.expanduser('~/.local/state/omarchy/agents/usage')
-MODULE = 'io.github.heitorm50.omadex'
+MODULE = 'io.github.heitorm50.omapkdex'
 
 fails = 0
 

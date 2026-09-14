@@ -1,4 +1,4 @@
-# Omadex
+# OmaPkDex
 
 A creature in your Omarchy bar that hatches and evolves as you burn AI coding
 tokens. A Pokédex, a catch log, Rare Candy for filling rate limits, and a shop
@@ -11,13 +11,13 @@ that spends the tokens you have already used.
 
 ## Requires `omarchy.agents`
 
-**Omadex collects no usage of its own.** It reads the records that the
+**OmaPkDex collects no usage of its own.** It reads the records that the
 first-party `omarchy.agents` plugin writes to
 `~/.local/state/omarchy/agents/usage/*.json`.
 
 That plugin must be **enabled and have recorded usage** — which means you need
 at least one AI coding CLI (Claude Code, Codex, Fireworks) that has actually
-run. Until a record exists, Omadex shows an egg and never hatches. That is not
+run. Until a record exists, OmaPkDex shows an egg and never hatches. That is not
 a failure: there is simply nothing to grow on yet.
 
 `omarchy.agents` ships with Omarchy and self-hides when no usage exists, so if
@@ -26,13 +26,13 @@ you see its robot icon in your bar, you are ready.
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/HeitorM50/omadex.git --enable
+omarchy plugin add https://github.com/HeitorM50/omapkdex.git --enable
 ```
 
 Then add it to the bar:
 
 ```bash
-omarchy bar add io.github.heitorm50.omadex --section right
+omarchy bar add io.github.heitorm50.omapkdex --section right
 ```
 
 ### Dependencies
@@ -46,25 +46,25 @@ omarchy bar add io.github.heitorm50.omadex --section right
 ## Remove
 
 ```bash
-omarchy bar remove io.github.heitorm50.omadex
-omarchy plugin remove io.github.heitorm50.omadex
+omarchy bar remove io.github.heitorm50.omapkdex
+omarchy plugin remove io.github.heitorm50.omapkdex
 ```
 
 Your progress and the sprite cache are left behind on purpose, so a reinstall
 picks up where you left off. To erase them too:
 
 ```bash
-rm -rf ~/.local/state/omarchy/io.github.heitorm50.omadex
-rm -rf ~/.cache/omarchy/io.github.heitorm50.omadex
+rm -rf ~/.local/state/omarchy/io.github.heitorm50.omapkdex
+rm -rf ~/.cache/omarchy/io.github.heitorm50.omapkdex
 ```
 
-Omadex writes nowhere else. The only change it makes to your Omarchy config is
+OmaPkDex writes nowhere else. The only change it makes to your Omarchy config is
 its own widget entry in `shell.json`, which `omarchy bar remove` takes out.
 
 ## How it works
 
 The records are a public contract of `omarchy.agents` (`schemaVersion: 1`,
-documented at `/usr/share/omarchy/shell/plugins/agents/README.md`). Omadex is a
+documented at `/usr/share/omarchy/shell/plugins/agents/README.md`). OmaPkDex is a
 read-only consumer: it never runs `omarchy-agent-usage-update` and never talks
 to the providers' APIs.
 
@@ -99,7 +99,7 @@ reads session files touched in the last 30 days, and the Fireworks one asks its
 billing API for 30 days. Summing `modelUsage` on every read would give a total
 that *shrinks* when sessions age out — and a creature that de-evolves.
 
-So Omadex keeps the last total seen per agent and accumulates only positive
+So OmaPkDex keeps the last total seen per agent and accumulates only positive
 deltas. A record that shrinks, zeroes, or is rewritten contributes nothing,
 never negative.
 
@@ -189,7 +189,7 @@ BagView.qml        |
 ShopView.qml       /
 Balance.js         read-side math (thresholds, progress, prices, formatting)
 Collection.js      the Pokédex projection over the catch log
-bin/omadex-sync    the only writer: PokéAPI, sprites, and all state mutation
+bin/omapkdex-sync  the only writer: PokéAPI, sprites, and all state mutation
 ```
 
 State mutation lives in the helper, not in QML, because **the bar instantiates
@@ -202,21 +202,21 @@ testable in Python instead of mirrored between QML and a test.
 
 | Path | Written by |
 |---|---|
-| `~/.local/state/omarchy/<id>/state.json` | `omadex-sync absorb` |
-| `~/.local/state/omarchy/<id>/companion.json` | `omadex-sync hatch` |
+| `~/.local/state/omarchy/<id>/state.json` | `omapkdex-sync absorb` |
+| `~/.local/state/omarchy/<id>/companion.json` | `omapkdex-sync hatch` |
 | `~/.local/state/omarchy/<id>/collection.json` | `absorb`, `hatch`, `buy`, `use` |
-| `~/.cache/omarchy/<id>/sprites/` | `omadex-sync` |
-| `~/.cache/omarchy/<id>/base-species.json` | `omadex-sync index` |
+| `~/.cache/omarchy/<id>/sprites/` | `omapkdex-sync` |
+| `~/.cache/omarchy/<id>/base-species.json` | `omapkdex-sync index` |
 
 ### The helper
 
 ```bash
-bin/omadex-sync index                   # rebuild the 329 base-species index
-bin/omadex-sync hatch [tier]            # roll a species and resolve its line
-bin/omadex-sync sprites <ids...>        # (re)download sprites
-bin/omadex-sync absorb <dif> [seed]     # accumulate tokens, advance progress
-bin/omadex-sync buy <item> <dif> [tier] # rareCandy|mint|shinyCharm|egg
-bin/omadex-sync use <item> <dif>        # rareCandy|mint
+bin/omapkdex-sync index                   # rebuild the 329 base-species index
+bin/omapkdex-sync hatch [tier]            # roll a species and resolve its line
+bin/omapkdex-sync sprites <ids...>        # (re)download sprites
+bin/omapkdex-sync absorb <dif> [seed]     # accumulate tokens, advance progress
+bin/omapkdex-sync buy <item> <dif> [tier] # rareCandy|mint|shinyCharm|egg
+bin/omapkdex-sync use <item> <dif>        # rareCandy|mint
 ```
 
 Sprites are the animated Gen-V GIFs from
@@ -234,15 +234,15 @@ down.
 - **Pokédex:** hover shows the detail line below the grid; the star pins a
   species to the bar; clicking a species you have owned both ways swaps the
   artwork.
-- **IPC:** `omarchy-shell io.github.heitorm50.omadex <open|close|toggle|refresh|hatch|companion|dex|log|bag|shop>`
+- **IPC:** `omarchy-shell io.github.heitorm50.omapkdex <open|close|toggle|refresh|hatch|companion|dex|log|bag|shop>`
 
 ## Settings
 
 In `~/.config/omarchy/shell.json`, in the widget's entry:
 
 ```bash
-omarchy bar set io.github.heitorm50.omadex difficulty 1.0 --json
-omarchy bar set io.github.heitorm50.omadex showTokens false --json
+omarchy bar set io.github.heitorm50.omapkdex difficulty 1.0 --json
+omarchy bar set io.github.heitorm50.omapkdex showTokens false --json
 ```
 
 | Key | Default | What it does |

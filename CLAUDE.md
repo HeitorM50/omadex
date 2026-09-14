@@ -28,7 +28,7 @@ Só depois disso o que você está testando é o que está em disco.
 
 ### 1. O helper é o único escritor de estado
 
-`bin/omadex-sync absorb` é a única coisa que escreve `state.json`. O QML observa,
+`bin/omapkdex-sync absorb` é a única coisa que escreve `state.json`. O QML observa,
 nunca muta.
 
 Isso não é estilo, é correção: **o bar instancia um widget por monitor**. Dois
@@ -186,8 +186,8 @@ tests/test_ditto.py           # o easter egg: disfarce, shiny escondido, revela�
 tests/test_dex.mjs            # projeção do Pokédex, ownsSpecies, 2×
 tests/test_shop.mjs           # lista da loja, bag, humor, tooltip
 tests/test_resilience.py      # falha de rede no meio das operações
-bin/omadex-sync index           # reconstrói o índice (deve dar 329 espécies base)
-bin/omadex-sync hatch           # sorteia e baixa sprites
+bin/omapkdex-sync index           # reconstrói o índice (deve dar 329 espécies base)
+bin/omapkdex-sync hatch           # sorteia e baixa sprites
 omarchy restart shell         # única forma confiável de testar QML novo
 ```
 
@@ -212,7 +212,7 @@ funcionar; ele precisa somar tokens a um record (ver `Sandbox.bump` em
 
 Para ver uma evolução sem esperar dias: edite `tokensIntoStage` em
 `state.json` para logo abaixo do limiar do estágio e rode
-`bin/omadex-sync absorb 0.3`. Os limiares em dificuldade 0.3, para um comum de 2
+`bin/omapkdex-sync absorb 0.3`. Os limiares em dificuldade 0.3, para um comum de 2
 formas, são 75M e 150M.
 
 ## Convenções

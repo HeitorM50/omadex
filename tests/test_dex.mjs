@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
-const PLUGIN = join(homedir(), '.config/omarchy/plugins/io.github.heitorm50.omadex')
+const PLUGIN = join(homedir(), '.config/omarchy/plugins/io.github.heitorm50.omapkdex')
 
 const dir = mkdtempSync(join(tmpdir(), 'ptb-dex-'))
 const shim = join(dir, 'collection.mjs')

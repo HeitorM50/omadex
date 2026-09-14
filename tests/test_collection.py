@@ -12,7 +12,7 @@ import shutil
 import tempfile
 
 PLUGIN = os.path.expanduser(
-    '~/.config/omarchy/plugins/io.github.heitorm50.omadex/bin/omadex-sync')
+    '~/.config/omarchy/plugins/io.github.heitorm50.omapkdex/bin/omapkdex-sync')
 
 fails = 0
 

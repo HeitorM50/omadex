@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.heitorm50.omadex",
-  "name": "Omadex",
+  "id": "io.github.heitorm50.omapkdex",
+  "name": "OmaPkDex",
   "version": "0.1.0",
   "author": "HeitorM50",
   "license": "MIT",
@@ -13,11 +13,11 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Omadex",
+    "displayName": "OmaPkDex",
     "description": "Animated sprite that evolves with your AI token usage, with a Pokédex, a catch log, Rare Candy from filled rate limits, and a token shop.",
     "category": "AI",
     "aliases": [
-      "omadex",
+      "omapkdex",
       "poketokenbar",
       "companion",
       "pokemon"
