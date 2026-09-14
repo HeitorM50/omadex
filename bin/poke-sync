@@ -18,10 +18,12 @@ JSON pela metade.
 
 from __future__ import annotations
 
+import datetime as _dt
 import fcntl
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 import urllib.error
@@ -67,6 +69,20 @@ def sprite_dir() -> str:
 
 def log(*parts: object) -> None:
     print(f"[{MODULE}]", *parts, file=sys.stderr)
+
+
+def notify(title: str, body: str = "") -> None:
+    """Notificação de desktop. O serviço do omarchy renderiza as do notify-send.
+
+    Falhar aqui nunca pode derrubar o helper: perder uma notificação é bem menos
+    grave que travar a progressão por causa dela.
+    """
+    try:
+        subprocess.run(["notify-send", "-a", "PokeTokenBar", title, body],
+                       check=False, timeout=5,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as exc:  # noqa: BLE001
+        log(f"notificação falhou: {exc}")
 
 
 def write_atomic(path: str, payload: bytes) -> None:
@@ -234,20 +250,36 @@ def rarity_for(entry: dict) -> str:
     return "common"
 
 
-def pick_species(entries: list[dict], *, floor: str | None = None) -> dict:
-    """Sorteia uma espécie base ponderada pelo capture_rate.
+def hatch_weights(entries: list[dict], collection: dict) -> list[int]:
+    """Pesos de sorteio: capture_rate, pela metade em linha já coletada.
 
     capture_rate é literalmente a facilidade de captura no jogo (3 = lendário,
     255 = Rattata), então usá-lo como peso dá de graça a curva que o original
-    descreve: comuns aparecem toda hora, lendário é evento raro.
+    descreve. A metade para linhas já coletadas empurra espécie nova sem proibir
+    repetição — e nunca zera, senão uma coleção grande travaria o sorteio.
     """
-    pool = entries
-    if floor:
-        order = ["common", "uncommon", "rare", "legendary"]
-        minimum = order.index(floor)
-        pool = [e for e in entries if order.index(rarity_for(e)) >= minimum] or entries
+    out = []
+    for entry in entries:
+        weight = max(1, int(entry.get("captureRate") or 1))
+        if has_graduated_line(collection, entry.get("id")):
+            weight = max(1, weight // 2)
+        out.append(weight)
+    return out
 
-    weights = [max(1, e["captureRate"]) for e in pool]
+
+def pick_species(entries: list[dict], *, tier: str | None = None,
+                 collection: dict | None = None) -> dict | None:
+    """Sorteia uma espécie base. `tier` é um piso de raridade garantido.
+
+    O piso é um teto de capture_rate (meets_tier), fonte única em
+    RARITY_CEILINGS. Devolve None quando o piso não tem candidato: o original
+    nunca cai de volta para o pool inteiro, porque isso entregaria menos do que
+    a pessoa pagou — ela mantém a garantia e tenta de novo.
+    """
+    pool = [e for e in entries if meets_tier(e, tier)] if tier else entries
+    if not pool:
+        return None
+    weights = hatch_weights(pool, collection or empty_collection())
     return random.choices(pool, weights=weights, k=1)[0]
 
 
@@ -391,7 +423,7 @@ def hatch_threshold(difficulty: float) -> int:
 
 
 def phase_threshold(rarity: str, total_forms: int, stage_index: int,
-                    difficulty: float) -> int:
+                    difficulty: float, growth_multiplier: int = 1) -> int:
     """Custo do estágio stage_index (0-based) numa linha de total_forms formas.
 
     custo(i) = T * (i+1) / (k*(k+1)/2) — a soma sobre todos os estágios é
@@ -402,7 +434,11 @@ def phase_threshold(rarity: str, total_forms: int, stage_index: int,
     i = min(max(0, int(stage_index)) + 1, k)
     denom = (k * (k + 1)) / 2
     base = round(graduation_total(rarity) * i / denom)
-    return max(1, round(base * clamp_difficulty(difficulty)))
+    scaled = round(base * clamp_difficulty(difficulty))
+    # O bônus de linha repetida DIVIDE o limiar (original: `max(1, round(
+    # standard / multiplier))`), então 2 significa "cresce duas vezes mais
+    # rápido", não "custa o dobro".
+    return max(1, round(scaled / max(1, int(growth_multiplier))))
 
 
 def record_tokens(record: dict) -> int:
@@ -435,6 +471,11 @@ DEFAULT_STATE = {
     "tokensIntoStage": 0,
     "hatched": False,
     "graduations": 0,
+    "spentTokens": 0,
+    "inventory": {},
+    "candyWindows": {},
+    "candySeeded": False,
+    "eggTier": None,
 }
 
 
@@ -447,6 +488,10 @@ def load_state() -> dict:
             merged.update(data)
             if not isinstance(merged.get("lastSeen"), dict):
                 merged["lastSeen"] = {}
+            if not isinstance(merged.get("inventory"), dict):
+                merged["inventory"] = {}
+            if not isinstance(merged.get("candyWindows"), dict):
+                merged["candyWindows"] = {}
             return merged
     except (OSError, json.JSONDecodeError):
         pass
@@ -505,6 +550,7 @@ def cmd_absorb(argv: list[str]) -> int:
         rarity = (companion or {}).get("rarity", "common")
         line = (companion or {}).get("evolutionLine") or []
         total_forms = max(1, len(line))
+        boost = growth_boost(load_collection(), companion)
 
         seen = state["lastSeen"]
         gained = 0
@@ -555,30 +601,15 @@ def cmd_absorb(argv: list[str]) -> int:
                 # Avança quantos estágios os tokens cobrirem. Um dia pesado pode
                 # cobrir mais de um, e avançar só um por execução deixaria
                 # tokens presos.
-                stage = state["stage"]
-                into = state["tokensIntoStage"]
-                while stage < total_forms:
-                    threshold = phase_threshold(rarity, total_forms, stage, difficulty)
-                    if into < threshold:
-                        break
-                    into -= threshold
-                    stage += 1
-
-                if stage >= total_forms:
-                    graduated = True
-                    state["graduations"] += 1
-                    state["hatched"] = False
-                    state["stage"] = 0
-                    # O excedente é descartado de propósito: carregá-lo faria
-                    # cascata no caso que importa, em que `seed` solta mais de um
-                    # bilhão de uma vez e graduaria vários Pokémon em sequência
-                    # contra uma linha que ainda nem foi sorteada. Em uso normal
-                    # a perda é de no máximo um delta, e só na graduação.
-                    state["tokensIntoStage"] = 0
+                graduated = advance_stages(state, rarity, total_forms,
+                                           difficulty, boost)
+                if graduated:
                     hatch_requested = True
-                else:
-                    state["stage"] = stage
-                    state["tokensIntoStage"] = into
+
+        # Candies por janela cheia. Roda a cada absorção, antes da escrita, e
+        # é independente de ter havido delta: bater o limite não exige tokens
+        # novos nesta passada.
+        grants = grant_candies(state, records)
 
         write_json(state_path(), state)
 
@@ -605,10 +636,273 @@ def cmd_absorb(argv: list[str]) -> int:
             # anterior fechada acima.
             cmd_hatch([])
 
+    for grant in grants:
+        # A notificação diz QUAL janela, como no original — sem isso a pessoa
+        # ganha uma candy e não sabe por quê.
+        notify("Rare Candy!", f"{grant['count']}x por bater {grant['name']}")
+
     log(f"absorveu {gained} tokens; lifetime={state['lifetimeTokens']} "
         f"stage={state['stage']} hatched={state['hatched']} "
-        f"graduations={state['graduations']}")
+        f"graduations={state['graduations']}"
+        + (f" candies={sum(g['count'] for g in grants)}" if grants else ""))
     return 0
+
+
+# ---- Economia ------------------------------------------------------------
+#
+# Constantes portadas verbatim de CompanionModel.swift:213-268. Os dois
+# comentários de balanceamento do original são load-bearing e estão replicados
+# aqui porque quem mexer nos números vai querer "melhorá-los".
+
+# XP injetado ao usar uma candy. NÃO entra em lifetimeTokens: a carteira é
+# lifetimeTokens − spentTokens, então somar isto ao lifetime faria de cada candy
+# uma máquina de dinheiro.
+RARE_CANDY_XP = 100_000_000
+
+# Preço = 5× o que a candy entrega, de propósito. Os tokens são usados duas
+# vezes (medidor de crescimento E carteira); preço igual ao XP tornaria a compra
+# um crescimento grátis. A 500M o bônus efetivo cai para ~+20%, e ganhar de
+# graça batendo o limite fica sempre melhor que comprar.
+RARE_CANDY_PRICE = 500_000_000
+
+# Quantas candies um limite de janela cheio paga.
+CANDY_WEEKLY_GRANT = 5
+CANDY_SESSION_GRANT = 1
+
+# Trocar a nature é cosmético, sem base de balanceamento — 1/5 da candy para ser
+# um brinquedo leve. Não dá crescimento, então não há dupla contagem.
+MINT_PRICE = 100_000_000
+
+# Passivo, compra única, permanente: preço de uma graduação `rare`.
+SHINY_CHARM_PRICE = 3_000_000_000
+# 1/64 -> 1/48 (+33%). O original rejeita explicitamente 1/32 como exagero.
+SHINY_CHARM_RATE = 48
+
+# Ovo sem garantia. Descarta o companion e volta à incubação de 5M — a perda do
+# progresso acumulado é o custo real, e é o que impede farmar re-rolls.
+FRESH_EGG_PRICE = 1_000_000_000
+
+# Graus vendidos. Sem ovo exclusivo de lendário: o piso é um teto de
+# capture_rate, e ser lendário vem de is_legendary, que o índice não carrega.
+# Como todo lendário tem capture_rate <= 45, ele entra naturalmente nos dois
+# graus pagos.
+EGG_TIERS = [None, "uncommon", "rare"]
+
+# As 25 natures da série principal. Aqui são só rótulo — sem stats, porque o
+# bloco de individualidade ficou fora de escopo. Existem para o Mint ter o que
+# re-sortear.
+NATURES = [
+    "hardy", "lonely", "brave", "adamant", "naughty",
+    "bold", "docile", "relaxed", "impish", "lax",
+    "timid", "hasty", "serious", "jolly", "naive",
+    "modest", "mild", "quiet", "bashful", "rash",
+    "calm", "gentle", "sassy", "careful", "quirky",
+]
+
+
+def egg_price(tier: str | None) -> int:
+    """Preço do ovo por grau garantido.
+
+    A razão sai da TABELA DE GRADUAÇÃO, não da de probabilidade. Pela
+    probabilidade (uncommon 7.16% : rare 6.98%), dois ovos uncommon baterriam um
+    rare em todos os eixos e o grau superior viraria bem inferior.
+    """
+    if tier is None:
+        return FRESH_EGG_PRICE
+    ratio = graduation_total(tier) / graduation_total("common")
+    return round(FRESH_EGG_PRICE * ratio)
+
+
+BASE_PRICES = {
+    "rareCandy": RARE_CANDY_PRICE,
+    "mint": MINT_PRICE,
+    "shinyCharm": SHINY_CHARM_PRICE,
+}
+
+PASSIVE_ITEMS = {"shinyCharm"}
+
+
+def shop_price(entry: str, shop_difficulty: float) -> int:
+    """Preço cobrado. `entry` é um item ou "egg:<grau>".
+
+    A dificuldade da loja é independente da de crescimento, e as tabelas de
+    constante nunca são escaladas — só o ponto de consumo, como no original.
+    """
+    if entry.startswith("egg"):
+        _, _, tier = entry.partition(":")
+        base = egg_price(tier or None)
+    else:
+        base = BASE_PRICES.get(entry, 0)
+    return max(0, round(base * clamp_difficulty(shop_difficulty)))
+
+
+def available_tokens(state: dict) -> int:
+    """A carteira: tudo o que já foi queimado, menos o que já foi gasto."""
+    lifetime = state.get("lifetimeTokens") or 0
+    spent = state.get("spentTokens") or 0
+    return max(0, int(lifetime) - int(spent))
+
+
+def shiny_denominator(inventory: dict) -> int:
+    return SHINY_CHARM_RATE if (inventory or {}).get("shinyCharm") else SHINY_RATE
+
+
+def meets_tier(entry: dict, tier: str | None) -> bool:
+    """O piso de raridade é um teto de capture_rate, fonte única em
+    RARITY_CEILINGS. Lendário passa em qualquer piso porque todo lendário tem
+    capture_rate <= 45."""
+    if tier is None:
+        return True
+    ceiling = dict(RARITY_CEILINGS).get(tier)
+    if ceiling is None:
+        return False
+    return int(entry.get("captureRate", 999)) <= ceiling
+
+
+def has_graduated_line(collection: dict, base_species_id: int) -> bool:
+    """A linha desta espécie base já foi levada até o fim e GRADUADA.
+
+    Liberada por compra de ovo não conta: o original não insere em
+    collectedFinals nesse caminho, então o descartado aparece no Pokédex mas
+    não paga o bônus de 2×.
+    """
+    for entry in (collection or {}).get("entries") or []:
+        if entry.get("speciesId") != base_species_id:
+            continue
+        if entry.get("graduatedAt") is None:
+            continue
+        line = entry.get("line") or []
+        if line and int(entry.get("finalStage") or 0) >= len(line) - 1:
+            return True
+    return False
+
+
+def advance_stages(state: dict, rarity: str, total_forms: int,
+                   difficulty: float, growth_multiplier: int = 1) -> bool:
+    """Avança quantos estágios os tokens acumulados cobrirem. Devolve se graduou.
+
+    Extraída de cmd_absorb para o `use rareCandy` reaproveitar em vez de
+    duplicar a regra. Um dia pesado — ou uma candy de 100M — pode cobrir mais de
+    um estágio, e avançar só um por chamada deixaria tokens presos.
+    """
+    stage = int(state.get("stage") or 0)
+    into = int(state.get("tokensIntoStage") or 0)
+
+    while stage < total_forms:
+        threshold = phase_threshold(rarity, total_forms, stage, difficulty,
+                                    growth_multiplier)
+        if into < threshold:
+            break
+        into -= threshold
+        stage += 1
+
+    if stage >= total_forms:
+        state["graduations"] = int(state.get("graduations") or 0) + 1
+        state["hatched"] = False
+        state["stage"] = 0
+        # O excedente é descartado de propósito: carregá-lo faria cascata no
+        # caso que importa, em que `seed` solta mais de um bilhão de uma vez e
+        # graduaria vários Pokémon em sequência contra uma linha que ainda nem
+        # foi sorteada. Em uso normal a perda é de no máximo um delta, e só na
+        # graduação.
+        state["tokensIntoStage"] = 0
+        return True
+
+    state["stage"] = stage
+    state["tokensIntoStage"] = into
+    return False
+
+
+def growth_boost(collection: dict, companion: dict | None) -> int:
+    """2 quando a linha base deste companion já foi graduada, senão 1."""
+    if not companion:
+        return 1
+    base = companion.get("baseSpeciesId")
+    return 2 if base and has_graduated_line(collection, base) else 1
+
+
+# ---- Janelas de limite (Rare Candy) --------------------------------------
+
+
+def window_key(agent_id: str, limit: dict) -> str:
+    """Identidade estável da janela.
+
+    O original proíbe em comentário usar campos voláteis como resets_at, e o
+    motivo é observável: o resetsAt do limite de sessão do Claude vem string
+    vazia. A chave é agente + label.
+    """
+    return f"{agent_id}:{limit.get('label') or ''}"
+
+
+def window_class(limit: dict) -> str:
+    """`weekly` ou `session`.
+
+    O original classifica por duração (> 1440 min => weekly). Os records não
+    trazem duração, só resetsAt e label, então: mais de 24h à frente => semanal;
+    sem resetsAt, cai para o label.
+    """
+    raw = str(limit.get("resetsAt") or "").strip()
+    if raw:
+        try:
+            when = _dt.datetime.fromisoformat(raw)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=_dt.timezone.utc)
+            delta = when - _dt.datetime.now(_dt.timezone.utc)
+            return "weekly" if delta.total_seconds() > 24 * 3600 else "session"
+        except ValueError:
+            pass
+    return "weekly" if "week" in str(limit.get("label") or "").lower() else "session"
+
+
+def candy_windows(records: dict) -> list[dict]:
+    """Todas as janelas de limite conhecidas, achatadas com a chave e a classe."""
+    out = []
+    for agent_id, record in (records or {}).items():
+        for limit in (record or {}).get("limits") or []:
+            if not isinstance(limit, dict) or not isinstance(limit.get("percent"), (int, float)):
+                continue
+            out.append({
+                "key": window_key(agent_id, limit),
+                "name": f"{(record.get('name') or agent_id)} · {limit.get('label') or ''}",
+                # percent nos records é 0..1; o utilization do original é 0..100.
+                "full": float(limit["percent"]) >= 1.0,
+                "kind": window_class(limit),
+            })
+    return out
+
+
+def grant_candies(state: dict, records: dict) -> list[dict]:
+    """Concede candies por janela cheia. Muta `state`, devolve as concessões.
+
+    Regra do original (evaluateCandyGrants): concede quando cheia e a janela não
+    está marcada; desmarca quando deixa de estar cheia. Sem histerese — o
+    percent de uma janela só cai na virada dela.
+    """
+    ledger = state.setdefault("candyWindows", {})
+    windows = candy_windows(records)
+
+    # Primeira execução: marca tudo o que já está cheio SEM conceder, para ligar
+    # a feature com o semanal em 100% não pagar 5 candies retroativas.
+    if not state.get("candySeeded"):
+        for w in windows:
+            if w["full"]:
+                ledger[w["key"]] = True
+        state["candySeeded"] = True
+        return []
+
+    grants = []
+    for w in windows:
+        if not w["full"]:
+            ledger[w["key"]] = False
+            continue
+        if ledger.get(w["key"]):
+            continue
+        count = CANDY_WEEKLY_GRANT if w["kind"] == "weekly" else CANDY_SESSION_GRANT
+        inventory = state.setdefault("inventory", {})
+        inventory["rareCandy"] = int(inventory.get("rareCandy") or 0) + count
+        ledger[w["key"]] = True
+        grants.append({"name": w["name"], "count": count})
+    return grants
 
 
 # ---- Shiny ----------------------------------------------------------------
@@ -618,14 +912,15 @@ def cmd_absorb(argv: list[str]) -> int:
 SHINY_RATE = 64
 
 
-def roll_shiny(rng=None) -> bool:
+def roll_shiny(rng=None, denominator: int = SHINY_RATE) -> bool:
     """Sorteia se a chocagem é shiny.
 
     Recebe o gerador para os testes poderem fixar o resultado; sem ele usa o
-    módulo `random`, que já é semeado pelo interpretador.
+    módulo `random`, que já é semeado pelo interpretador. O denominador vem do
+    inventário (48 com Shiny Charm, 64 sem) — ver shiny_denominator.
     """
     source = rng if rng is not None else random
-    return source.randrange(SHINY_RATE) == 0
+    return source.randrange(max(1, int(denominator))) == 0
 
 
 # ---- Coleção (catch log) --------------------------------------------------
@@ -679,8 +974,15 @@ def companion_key(companion: dict):
 
 
 def open_entry(collection: dict) -> dict | None:
+    """A entrada do companion atual, se houver.
+
+    Uma entrada está aberta só quando não graduou NEM foi liberada. Sem checar
+    `releasedAt` aqui, uma entrada liberada por compra de ovo continuaria
+    parecendo aberta, e a chocagem seguinte a fecharia como graduada — dando o
+    bônus de 2× a uma linha que foi descartada.
+    """
     for entry in collection["entries"]:
-        if entry.get("graduatedAt") is None:
+        if entry.get("graduatedAt") is None and entry.get("releasedAt") is None:
             return entry
     return None
 
@@ -724,7 +1026,9 @@ def sync_open_entry(collection: dict, companion: dict, now: int) -> bool:
     # Um companion trocado sem graduar (re-hatch manual, ovo comprado) abandona
     # o anterior. Ele fica no catch log, fechado no estágio a que chegou.
     for entry in collection["entries"]:
-        if entry.get("graduatedAt") is None and entry.get("companionId") != key:
+        if (entry.get("graduatedAt") is None
+                and entry.get("releasedAt") is None
+                and entry.get("companionId") != key):
             entry["graduatedAt"] = now
             changed = True
 
@@ -747,6 +1051,20 @@ def record_stage(collection: dict, stage: int) -> bool:
     return True
 
 
+def release_open_entry(collection: dict, now: int) -> bool:
+    """Fecha a entrada aberta como LIBERADA (descartada por compra de ovo).
+
+    Distinto de graduar: a entrada aparece no Pokédex e no histórico com as
+    formas alcançadas, mas `has_graduated_line` não a conta, então não paga o
+    bônus de crescimento 2×.
+    """
+    entry = open_entry(collection)
+    if entry is None:
+        return False
+    entry["releasedAt"] = now
+    return True
+
+
 def close_open_entry(collection: dict, now: int, final_stage: int) -> bool:
     """Fecha a entrada aberta na graduação. No-op se não houver nenhuma."""
     entry = open_entry(collection)
@@ -765,10 +1083,25 @@ def companion_path() -> str:
 
 
 def cmd_hatch(argv: list[str]) -> int:
-    floor = argv[0] if argv else None
+    state = load_state()
+    # O grau garantido vem do estado (comprado antes, possivelmente offline);
+    # um argumento explícito existe só para testar e para `hatch rare` na mão.
+    tier = argv[0] if argv else state.get("eggTier")
+    if tier not in EGG_TIERS:
+        tier = None
+
+    collection = load_collection()
     entries = load_index()
-    entry = pick_species(entries, floor=floor)
-    shiny = roll_shiny()
+    entry = pick_species(entries, tier=tier, collection=collection)
+
+    if entry is None:
+        # Piso sem candidato: a pessoa MANTÉM a garantia e tenta de novo no
+        # próximo tick. Cair para o pool inteiro entregaria menos do que ela
+        # pagou.
+        log(f"nenhuma espécie atende o piso {tier!r}; a garantia continua valendo")
+        return 1
+
+    shiny = roll_shiny(denominator=shiny_denominator(state.get("inventory")))
     line = hydrate_sprites(evolution_line(entry["id"]), shiny)
     now = int(time.time())
 
@@ -779,17 +1112,31 @@ def cmd_hatch(argv: list[str]) -> int:
         "name": entry["name"],
         "rarity": rarity_for(entry),
         "shiny": shiny,
+        # Só rótulo: existe para o Mint ter o que re-sortear. Sem stats, porque
+        # o bloco de individualidade ficou fora de escopo.
+        "nature": random.choice(NATURES),
         "captureRate": entry["captureRate"],
         "evolutionLine": line,
         "hatchedAt": now,
     }
     write_json(companion_path(), companion)
 
+    # O grau é consumido exatamente aqui, na chocagem que o honrou.
+    if state.get("eggTier") is not None:
+        state["eggTier"] = None
+        write_json(state_path(), state)
+
     # A entrada de catch log nasce junto com o companion: o Pokémon entra no
     # Pokédex assim que choca, não só quando gradua.
-    collection = load_collection()
     if sync_open_entry(collection, companion, now):
         save_collection(collection)
+
+    nome = entry["name"].replace("-", " ").title()
+    if shiny:
+        notify("✨ Shiny!", f"Um {nome} shiny chocou — é 1 em "
+                           f"{shiny_denominator(state.get('inventory'))}.")
+    else:
+        notify("Chocou!", f"{nome} ({rarity_for(entry)})")
 
     log(f"chocou {entry['name']} ({rarity_for(entry)})"
         f"{' SHINY' if shiny else ''}, linha de {len(line)} forma(s)")
@@ -818,8 +1165,193 @@ def cmd_index(_argv: list[str]) -> int:
     return 0
 
 
+def _with_state_lock(fn):
+    """Roda `fn(state)` sob o mesmo flock do absorb, salvando se devolver True.
+
+    Compras e usos precisam do mesmo lock que a absorção: sem isso um absorb
+    concorrente poderia sobrescrever a compra, ou vice-versa.
+    """
+    os.makedirs(state_dir(), exist_ok=True)
+    with open(lock_path(), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)   # bloqueante: uma compra não desiste
+        state = load_state()
+        result = fn(state)
+        if result:
+            write_json(state_path(), state)
+        return result
+
+
+def cmd_buy(argv: list[str]) -> int:
+    """buy <rareCandy|mint|shinyCharm|egg> <shopDifficulty> [grau]"""
+    if not argv:
+        log("uso: poke-sync buy <item|egg> <shopDifficulty> [grau]")
+        return 2
+    what = argv[0]
+    shop_difficulty = clamp_difficulty(argv[1] if len(argv) > 1 else DIFFICULTY_DEFAULT)
+    tier = argv[2] if len(argv) > 2 else None
+
+    if what == "egg":
+        if tier not in EGG_TIERS:
+            log(f"grau de ovo inválido: {tier!r} (aceitos: {EGG_TIERS})")
+            return 2
+        entry = f"egg:{tier or ''}"
+    elif what in BASE_PRICES:
+        entry = what
+    else:
+        log(f"item desconhecido: {what}")
+        return 2
+
+    price = shop_price(entry, shop_difficulty)
+    companion = load_companion()
+    outcome = {"ok": False}
+
+    def apply(state):
+        inventory = state.setdefault("inventory", {})
+
+        # Passivo é compra única: comprar de novo não cobra nem faz nada.
+        if what in PASSIVE_ITEMS and inventory.get(what):
+            log(f"{what} já é seu (item passivo, compra única)")
+            return False
+
+        # Ovo descarta o companion atual; sem companion não há o que descartar.
+        if what == "egg" and not (state.get("hatched") and companion):
+            log("não há companion para descartar — você já está num ovo")
+            return False
+
+        if available_tokens(state) < price:
+            log(f"saldo insuficiente: {available_tokens(state)} < {price}")
+            return False
+
+        state["spentTokens"] = int(state.get("spentTokens") or 0) + price
+
+        if what == "egg":
+            # O grau é PERSISTIDO, não resolvido agora: sortear espécie precisa
+            # de rede, e comprar offline não pode queimar tokens sem entregar.
+            state["eggTier"] = tier
+            state["hatched"] = False
+            state["stage"] = 0
+            # Perder o progresso acumulado é o custo real do re-roll, e é o que
+            # impede farmar chocagens.
+            state["tokensIntoStage"] = 0
+            outcome["released"] = True
+        else:
+            if what in PASSIVE_ITEMS:
+                inventory[what] = True
+            else:
+                inventory[what] = int(inventory.get(what) or 0) + 1
+
+        outcome["ok"] = True
+        return True
+
+    if not _with_state_lock(apply):
+        return 1
+
+    if outcome.get("released"):
+        # O descartado NÃO desaparece: entra no histórico marcado como liberado,
+        # com as formas alcançadas. O que ele não faz é entrar na contagem de
+        # linhas graduadas, então não paga o bônus de 2×.
+        collection = load_collection()
+        if release_open_entry(collection, int(time.time())):
+            save_collection(collection)
+        cmd_hatch([])
+
+    log(f"comprou {entry} por {price}")
+    return 0
+
+
+def cmd_use(argv: list[str]) -> int:
+    """use <rareCandy|mint> <growthDifficulty>"""
+    if not argv:
+        log("uso: poke-sync use <rareCandy|mint> <growthDifficulty>")
+        return 2
+    what = argv[0]
+    difficulty = clamp_difficulty(argv[1] if len(argv) > 1 else DIFFICULTY_DEFAULT)
+
+    if what not in ("rareCandy", "mint"):
+        log(f"item não usável: {what}")
+        return 2
+
+    companion = load_companion()
+    line = (companion or {}).get("evolutionLine") or []
+
+    if what == "mint":
+        # O Mint não precisa da linha carregada; só de um companion.
+        if not companion:
+            log("sem companion para aplicar o Mint")
+            return 1
+
+        atual = companion.get("nature")
+        # Escolhe entre as outras 24, então a nature SEMPRE muda — o original faz
+        # igual, senão pagar por um Mint e não ver diferença parece bug.
+        opcoes = [n for n in NATURES if n != atual] or list(NATURES)
+        nova = random.choice(opcoes)
+
+        def apply_mint(state):
+            inventory = state.setdefault("inventory", {})
+            if int(inventory.get("mint") or 0) <= 0:
+                log("sem Mint no inventário")
+                return False
+            inventory["mint"] = int(inventory["mint"]) - 1
+            return True
+
+        if not _with_state_lock(apply_mint):
+            return 1
+
+        companion["nature"] = nova
+        write_json(companion_path(), companion)
+        log(f"nature: {atual} -> {nova}")
+        return 0
+
+    # rareCandy: exige a linha carregada, senão a candy seria gasta sem que dê
+    # para checar evolução — o original tem a mesma guarda.
+    if not companion or not line:
+        log("sem companion (ou sem linha evolutiva) para usar a candy")
+        return 1
+
+    rarity = companion.get("rarity") or "common"
+    total_forms = max(1, len(line))
+    boost = growth_boost(load_collection(), companion)
+    graduated = {"yes": False}
+
+    def apply_candy(state):
+        inventory = state.setdefault("inventory", {})
+        if int(inventory.get("rareCandy") or 0) <= 0:
+            log("sem Rare Candy no inventário")
+            return False
+        if not state.get("hatched"):
+            log("a candy só serve num Pokémon chocado")
+            return False
+
+        inventory["rareCandy"] = int(inventory["rareCandy"]) - 1
+        # O XP entra SÓ no progresso. Somar a lifetimeTokens faria de cada candy
+        # uma máquina de dinheiro, porque a carteira é lifetime − spent.
+        # E não é escalado pela dificuldade: escalar os dois se cancelaria.
+        state["tokensIntoStage"] = int(state.get("tokensIntoStage") or 0) + RARE_CANDY_XP
+        graduated["yes"] = advance_stages(state, rarity, total_forms, difficulty, boost)
+        return True
+
+    if not _with_state_lock(apply_candy):
+        return 1
+
+    collection = load_collection()
+    now = int(time.time())
+    if graduated["yes"]:
+        if close_open_entry(collection, now, total_forms - 1):
+            save_collection(collection)
+        cmd_hatch([])
+    else:
+        state = load_state()
+        if record_stage(collection, int(state.get("stage") or 0)):
+            save_collection(collection)
+
+    log(f"usou uma Rare Candy (+{RARE_CANDY_XP})"
+        + (" e graduou" if graduated["yes"] else ""))
+    return 0
+
+
 COMMANDS = {"hatch": cmd_hatch, "sprites": cmd_sprites,
-            "index": cmd_index, "absorb": cmd_absorb}
+            "index": cmd_index, "absorb": cmd_absorb,
+            "buy": cmd_buy, "use": cmd_use}
 
 
 def main(argv: list[str]) -> int:

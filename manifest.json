@@ -16,7 +16,11 @@
     "displayName": "PokeTokenBar",
     "description": "Sprite animado que evolui com o uso de tokens dos seus agentes de IA, com a linha evolutiva e o progresso num popout.",
     "category": "AI",
-    "aliases": ["poketokenbar", "companion", "pokemon"],
+    "aliases": [
+      "poketokenbar",
+      "companion",
+      "pokemon"
+    ],
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
@@ -25,18 +29,29 @@
       "showTokens": true,
       "showLimitPercent": false,
       "seedFromExisting": false,
-      "pollSeconds": 60
+      "pollSeconds": 60,
+      "shopDifficulty": 1.0
     },
     "schema": [
       {
         "key": "difficulty",
         "type": "real",
-        "label": "Dificuldade",
+        "label": "Dificuldade de crescimento",
         "min": 0.1,
         "max": 2.0,
         "step": 0.1,
         "defaultValue": 0.3,
         "description": "Multiplica os limiares de evolução. Abaixo de 1 evolui mais rápido. O padrão 0.3 é calibrado para ~50M tokens/dia; use 1.0 para o balanceamento original do PokeTokenBar (~253M/dia)."
+      },
+      {
+        "key": "shopDifficulty",
+        "type": "real",
+        "label": "Preços da loja",
+        "min": 0.1,
+        "max": 2.0,
+        "step": 0.1,
+        "defaultValue": 1.0,
+        "description": "Multiplica os preços da Loja, independente da dificuldade de crescimento. Abaixo de 1 fica mais barato."
       },
       {
         "key": "spriteSize",

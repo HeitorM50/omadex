@@ -163,7 +163,7 @@ def stub_network(ps, species_id=341, name='corphish', rate=205, line=None):
     ps.load_index = lambda **kw: [{'id': species_id, 'name': name,
                                    'captureRate': rate,
                                    'isLegendary': False, 'isMythical': False}]
-    ps.pick_species = lambda entries, floor=None: entries[0]
+    ps.pick_species = lambda entries, tier=None, collection=None: entries[0]
     ps.evolution_line = lambda base_id: [{'id': i, 'name': n} for i, n in line]
     ps.hydrate_sprites = lambda forms, shiny=False: [
         dict(f, sprite=f"/fake/{f['id']}{'-shiny' if shiny else ''}.gif") for f in forms]
@@ -183,7 +183,7 @@ def read_companion(sb):
 print("\n--- 7. cmd_hatch grava shiny no companion e abre a entrada ---")
 with Sandbox() as sb:
     ps = stub_network(load_helper())
-    ps.roll_shiny = lambda rng=None: True
+    ps.roll_shiny = lambda rng=None, denominator=64: True
     ps.cmd_hatch([])
     comp = read_companion(sb)
     eq("companion marcado shiny", comp['shiny'], True)
@@ -196,7 +196,7 @@ with Sandbox() as sb:
 print("\n--- 8. chocagem normal não marca shiny ---")
 with Sandbox() as sb:
     ps = stub_network(load_helper())
-    ps.roll_shiny = lambda rng=None: False
+    ps.roll_shiny = lambda rng=None, denominator=64: False
     ps.cmd_hatch([])
     eq("companion normal", read_companion(sb)['shiny'], False)
     eq("entrada normal", read_collection(sb)['entries'][0]['shiny'], False)
@@ -205,7 +205,7 @@ with Sandbox() as sb:
 print("\n--- 9. hatch rodado duas vezes não deixa duas entradas abertas ---")
 with Sandbox() as sb:
     ps = stub_network(load_helper())
-    ps.roll_shiny = lambda rng=None: False
+    ps.roll_shiny = lambda rng=None, denominator=64: False
     ps.cmd_hatch([])
     ps.cmd_hatch([])
     col = read_collection(sb)
@@ -216,7 +216,7 @@ with Sandbox() as sb:
 print("\n--- 10. avanço de estágio é registrado na entrada aberta ---")
 with Sandbox() as sb:
     ps = stub_network(load_helper())
-    ps.roll_shiny = lambda rng=None: False
+    ps.roll_shiny = lambda rng=None, denominator=64: False
     ps.cmd_hatch([])
     ps.cmd_absorb(['0.3'])                       # marca a régua
     sb.put_state(lastSeen=sb.read_state()['lastSeen'],
@@ -229,7 +229,7 @@ with Sandbox() as sb:
 print("\n--- 11. graduação fecha a entrada e abre a do ovo novo ---")
 with Sandbox() as sb:
     ps = stub_network(load_helper())
-    ps.roll_shiny = lambda rng=None: False
+    ps.roll_shiny = lambda rng=None, denominator=64: False
     ps.cmd_hatch([])
     ps.cmd_absorb(['0.3'])
     sb.put_state(lastSeen=sb.read_state()['lastSeen'],

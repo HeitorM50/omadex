@@ -44,6 +44,9 @@ BarWidget {
 
   // ---- Settings
   readonly property real difficulty: Balance.clampDifficulty(setting("difficulty", 0.3))
+  // Independente da de crescimento, como no original: uma é o ritmo do jogo, a
+  // outra é o preço das coisas.
+  readonly property real shopDifficulty: Balance.clampDifficulty(setting("shopDifficulty", 1.0))
   readonly property int spriteSize: Math.max(14, parseInt(setting("spriteSize", 22), 10) || 22)
   readonly property bool showTokens: setting("showTokens", true) === true
   readonly property bool showLimitPercent: setting("showLimitPercent", false) === true
@@ -167,14 +170,35 @@ BarWidget {
     hatchProc.running = true
   }
 
+  function buy(key, tier) {
+    if (buyProc.running) return
+    var isEgg = String(key).indexOf("egg") === 0
+    buyProc.key = isEgg ? "egg" : key
+    buyProc.tier = isEgg ? (String(key).split(":")[1] || "") : ""
+    buyProc.running = true
+  }
+
+  function use(key) {
+    if (useProc.running) return
+    useProc.key = key
+    useProc.running = true
+  }
+
+  // Os FileViews observam os arquivos, mas uma compra é uma mudança que a pessoa
+  // acabou de pedir: recarregar na hora faz o saldo cair na tela sem esperar o
+  // evento de arquivo.
+  function reloadFiles() {
+    stateFile.reload()
+    companionFile.reload()
+    collectionFile.reload()
+  }
+
   function refresh() {
     for (var i = 0; i < watchers.count; i++) {
       var item = watchers.itemAt(i)
       if (item) item.reload()
     }
-    stateFile.reload()
-    companionFile.reload()
-    collectionFile.reload()
+    reloadFiles()
     absorb()
   }
 
@@ -303,6 +327,34 @@ BarWidget {
     // FileViews pegam as mudanças. Nada a parsear aqui.
   }
 
+  // Compra e uso vão pelo helper, que é o único escritor. As duas escrevem
+  // state.json, então precisam do mesmo flock do absorb — e o helper já o pega.
+  Process {
+    id: buyProc
+    property string key: ""
+    property string tier: ""
+    command: [root.pluginDir + "/bin/poke-sync", "buy", key,
+              String(root.shopDifficulty)].concat(tier ? [tier] : [])
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function (code) {
+      if (code !== 0) console.warn(root.moduleName, "compra recusada:", buyProc.key)
+      root.reloadFiles()
+    }
+  }
+
+  Process {
+    id: useProc
+    property string key: ""
+    command: [root.pluginDir + "/bin/poke-sync", "use", key, String(root.difficulty)]
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function (code) {
+      if (code !== 0) console.warn(root.moduleName, "uso recusado:", useProc.key)
+      root.reloadFiles()
+    }
+  }
+
   Process {
     id: hatchProc
     command: [root.pluginDir + "/bin/poke-sync", "hatch"]
@@ -350,6 +402,8 @@ BarWidget {
     function companion(): void { root.openTab(0) }
     function dex(): void { root.openTab(1) }
     function log(): void { root.openTab(2) }
+    function bag(): void { root.openTab(3) }
+    function shop(): void { root.openTab(4) }
   }
 
   WidgetButton {

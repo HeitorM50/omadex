@@ -38,7 +38,9 @@ Panel {
   readonly property var tabs: [
     { key: "companion", label: "Companion" },
     { key: "dex", label: "Pokédex" },
-    { key: "log", label: "Histórico" }
+    { key: "log", label: "Histórico" },
+    { key: "bag", label: "Bag" },
+    { key: "shop", label: "Loja" }
   ]
   property int tab: 0
 
@@ -54,6 +56,16 @@ Panel {
 
   function refresh() {
     if (host && typeof host.refresh === "function") host.refresh()
+  }
+
+  // Compras e usos passam pelo widget, que dispara o helper — o helper é o
+  // único escritor de estado, e o QML nunca muta nada.
+  function buy(key, tier) {
+    if (host && typeof host.buy === "function") host.buy(key, tier)
+  }
+
+  function use(key) {
+    if (host && typeof host.use === "function") host.use(key)
   }
 
   // Abre o painel rico do omarchy.agents, que é quem tem os números detalhados.
@@ -107,7 +119,7 @@ Panel {
       onTextKey: function (t) {
         if (t === "r" || t === "R") root.refresh()
         else if (t === "a" || t === "A") root.openAgents()
-        else if (t >= "1" && t <= "3") root.setTab(parseInt(t, 10) - 1)
+        else if (t >= "1" && t <= "5") root.setTab(parseInt(t, 10) - 1)
       }
 
       Column {
@@ -130,8 +142,10 @@ Panel {
 
               readonly property bool active: root.tab === index
 
-              width: Math.max(label.implicitWidth + Style.space(16),
-                              (column.width - Style.space(8)) / root.tabs.length)
+              // Largura natural, não dividida igualmente. Medido na fonte real
+              // a 10px, os cinco rótulos somam ~293px de chip em 340px de
+              // conteúdo; a divisão igual daria 68px e cortaria "Companion".
+              width: label.implicitWidth + Style.space(12)
               height: Style.space(24)
               radius: Style.space(5)
               color: active
@@ -174,7 +188,9 @@ Panel {
           width: parent.width
           active: true
           sourceComponent: root.tab === 0 ? companionComponent
-                           : root.tab === 1 ? dexComponent : logComponent
+                           : root.tab === 1 ? dexComponent
+                           : root.tab === 2 ? logComponent
+                           : root.tab === 3 ? bagComponent : shopComponent
         }
 
         Text {
@@ -182,7 +198,7 @@ Panel {
           textFormat: Text.PlainText
           text: root.tab === 0
                 ? "←/→ troca de aba · r reavalia · a abre os detalhes · Esc fecha"
-                : "←/→ troca de aba · Esc fecha"
+                : "←/→ troca de aba · 1-5 vai direto · Esc fecha"
           color: Qt.darker(root.contentForeground, 1.8)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -212,6 +228,28 @@ Panel {
       collection: root.collection
       foreground: root.contentForeground
       fontFamily: root.fontFamily
+    }
+  }
+
+  Component {
+    id: bagComponent
+    BagView {
+      width: viewLoader.width
+      host: root.host
+      foreground: root.contentForeground
+      fontFamily: root.fontFamily
+      onUseRequested: function (key) { root.use(key) }
+    }
+  }
+
+  Component {
+    id: shopComponent
+    ShopView {
+      width: viewLoader.width
+      host: root.host
+      foreground: root.contentForeground
+      fontFamily: root.fontFamily
+      onBuyRequested: function (key, tier) { root.buy(key, tier) }
     }
   }
 

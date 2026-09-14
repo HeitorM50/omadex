@@ -81,6 +81,143 @@ function progress(rarity, totalForms, stageIndex, tokensIntoStage, difficulty) {
 // Duplicá-la em JS criaria duas implementações da mesma regra para divergir.
 // Este arquivo é matemática de leitura: limiares, progresso e formatação.
 
+// ---- Economia ------------------------------------------------------------
+//
+// Os preços têm de sair do MESMO lugar que o helper usa, senão a loja mostra um
+// número e o `poke-sync buy` cobra outro. Estas constantes são as mesmas de
+// bin/poke-sync, e tests/test_shop.mjs trava as duas listas no mesmo valor.
+
+var RARE_CANDY_PRICE = 500000000
+var MINT_PRICE = 100000000
+var SHINY_CHARM_PRICE = 3000000000
+var FRESH_EGG_PRICE = 1000000000
+
+var BASE_PRICES = {
+  mint: MINT_PRICE,
+  rareCandy: RARE_CANDY_PRICE,
+  shinyCharm: SHINY_CHARM_PRICE
+}
+
+// Passivo: comprado uma vez, vale para sempre, não se consome.
+var PASSIVE_ITEMS = { shinyCharm: true }
+
+// Ordem em que a bag lista, independente da ordem do objeto de inventário.
+var BAG_ORDER = ["rareCandy", "mint", "shinyCharm"]
+
+function eggPrice(tier) {
+  if (!tier) return FRESH_EGG_PRICE
+  // A razão sai da tabela de graduação, não da de probabilidade — ver o
+  // comentário no helper.
+  return Math.round(FRESH_EGG_PRICE * graduationTotal(tier) / graduationTotal("common"))
+}
+
+function shopPrice(key, shopDifficulty) {
+  var base
+  if (String(key).indexOf("egg") === 0) {
+    var tier = String(key).split(":")[1] || null
+    base = eggPrice(tier)
+  } else {
+    base = BASE_PRICES[key] || 0
+  }
+  return Math.max(0, Math.round(base * clampDifficulty(shopDifficulty)))
+}
+
+function availableTokens(state) {
+  if (!state) return 0
+  var lifetime = Number(state.lifetimeTokens) || 0
+  var spent = Number(state.spentTokens) || 0
+  return Math.max(0, lifetime - spent)
+}
+
+function itemLabel(key) {
+  switch (key) {
+    case "rareCandy": return "Rare Candy"
+    case "mint": return "Mint"
+    case "shinyCharm": return "Shiny Charm"
+    case "egg:": return "Ovo"
+    case "egg:uncommon": return "Ovo Incomum"
+    case "egg:rare": return "Ovo Raro"
+    default: return key
+  }
+}
+
+function itemGlyph(key) {
+  switch (key) {
+    case "rareCandy": return "🍬"
+    case "mint": return "🌿"
+    case "shinyCharm": return "✨"
+    default: return "🥚"
+  }
+}
+
+function itemHint(key) {
+  switch (key) {
+    case "rareCandy": return "+" + formatTokens(100000000) + " de crescimento"
+    case "mint": return "sorteia outra nature"
+    case "shinyCharm": return "chance de shiny 1/64 → 1/48, para sempre"
+    case "egg:": return "descarta o atual e começa de novo"
+    case "egg:uncommon": return "garante Incomum ou melhor"
+    case "egg:rare": return "garante Raro ou melhor"
+    default: return ""
+  }
+}
+
+// A loja é UMA lista em ordem de preço, itens e ovos juntos — como no original.
+// O passivo já comprado afunda para o fim em vez de sair da lista, para a
+// pessoa ver que já tem.
+function shopEntries(inventory, shopDifficulty, wallet) {
+  var inv = inventory || {}
+  var saldo = wallet === undefined ? null : wallet
+  var keys = ["mint", "rareCandy", "shinyCharm", "egg:", "egg:uncommon", "egg:rare"]
+
+  var rows = keys.map(function (key) {
+    var price = shopPrice(key, shopDifficulty)
+    var owned = PASSIVE_ITEMS[key] === true && inv[key] === true
+    return {
+      key: key,
+      label: itemLabel(key),
+      hint: itemHint(key),
+      glyph: itemGlyph(key),
+      price: price,
+      owned: owned,
+      passive: PASSIVE_ITEMS[key] === true,
+      isEgg: String(key).indexOf("egg") === 0,
+      tier: String(key).indexOf("egg") === 0 ? (String(key).split(":")[1] || null) : null,
+      affordable: saldo === null ? true : saldo >= price
+    }
+  })
+
+  rows.sort(function (a, b) {
+    if (a.owned !== b.owned) return a.owned ? 1 : -1
+    return a.price - b.price
+  })
+  return rows
+}
+
+// A bag lista só o que se tem. Contagem zero e charm falso não aparecem — uma
+// linha "0x Rare Candy" é ruído.
+function bagEntries(inventory) {
+  var inv = inventory || {}
+  var rows = []
+  for (var i = 0; i < BAG_ORDER.length; i++) {
+    var key = BAG_ORDER[i]
+    var passive = PASSIVE_ITEMS[key] === true
+    if (passive) {
+      if (inv[key] !== true) continue
+      rows.push({ key: key, label: itemLabel(key), hint: itemHint(key),
+                  glyph: itemGlyph(key), count: null, passive: true,
+                  usable: false })
+    } else {
+      var n = Number(inv[key]) || 0
+      if (n <= 0) continue
+      rows.push({ key: key, label: itemLabel(key), hint: itemHint(key),
+                  glyph: itemGlyph(key), count: n, passive: false,
+                  usable: true })
+    }
+  }
+  return rows
+}
+
 // ---- Formatação ----------------------------------------------------------
 
 // Compacto no estilo do original ("200.7M"). O bar tem pouquíssimo espaço e um
