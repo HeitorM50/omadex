@@ -90,6 +90,13 @@ Só o botão do bar usa os segundos. Se você fizer o painel usar `barSprite`, e
 passa a anunciar uma espécie com o estágio de outra — foi exatamente o bug que
 apareceu quando os dois eram a mesma propriedade.
 
+Corolário que já causou um bug reportado: com espécie fixada, o bar **não pode**
+atribuir o progresso do companion ao nome da fixada. "Corphish · estágio 2/2" é
+contradição, porque o Corphish é o estágio 1 — e quem lê fica sem saber em que
+estágio está. O `Balance.barTooltip` garante que a fixada nunca apareça na mesma
+linha que um estágio, e a estrela sobre o sprite diz no próprio bar que aquela
+não é a espécie em criação. Pista que depende de hover não serve aqui.
+
 ### 7. O XP da candy não entra na carteira
 
 A carteira é `lifetimeTokens − spentTokens`. Somar o XP da Rare Candy ao

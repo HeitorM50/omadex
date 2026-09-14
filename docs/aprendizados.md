@@ -254,3 +254,40 @@ limiar no comentário do teste em vez de confiar na memória.
 teste ao lado da asserção. O comentário "dif 0.2 numa linha de 2 formas:
 limiares 50M e 100M" vale mais que o número nu, porque o próximo leitor —
 inclusive você — vai querer conferir.
+
+## 14. Um bug que as propriedades certas não impediam
+
+O Heitor reportou: o bar mostrava Corphish, o painel mostrava Crawdaunt, e ele
+não sabia em que estágio estava.
+
+Instrumentei as fronteiras antes de teorizar, e todas as propriedades estavam
+corretas: `barSprite` apontava para `342.gif`, `sourceSize` era `70x64` (o
+Crawdaunt, não o Corphish de `59x46`), `representative` era `null`. Os arquivos
+de sprite também estavam certos. Cheguei a suspeitar de cache de imagem do Qt —
+e estava errado.
+
+A causa era o **texto**, não a imagem. Com espécie fixada, o tooltip montava:
+
+```
+Corphish              ← nome da espécie fixada
+Comum · estágio 2/2   ← estágio do companion real
+```
+
+"Corphish · estágio 2/2" é contradição: o Corphish *é* o estágio 1. As duas
+identidades estavam corretas cada uma no seu lugar, e o defeito era juntá-las
+numa frase que afirmava algo falso. A única pista de que havia duas coisas era
+uma linha de tooltip **abaixo** da informação contraditória.
+
+O conserto tem duas partes. O tooltip virou função pura (`Balance.barTooltip`)
+com um teste que trava a regra — a fixada nunca aparece na mesma linha que um
+estágio — e o bar ganhou uma estrela sobre o sprite, porque a pista de que
+aquela não é a espécie em criação não pode depender de hover.
+
+**A lição:** quando cada valor está certo e o resultado está errado, o defeito
+está na composição. Instrumentar as fronteiras me disse rápido *onde não era*, o
+que valeu mais que qualquer palpite — mas eu só achei o bug quando parei de olhar
+a imagem e li a frase que o programa escrevia.
+
+E uma lição sobre mim: a segunda parte do conserto (a estrela) atende ao que ele
+de fato reclamou, que era não saber em que estágio estava. Consertar só o texto
+teria resolvido a contradição e deixado a ambiguidade.

@@ -15,7 +15,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ptb-shop-'))
 const shim = join(dir, 'balance.mjs')
 writeFileSync(shim,
   readFileSync(join(PLUGIN, 'Balance.js'), 'utf8').replace(/^\.pragma library\s*/m, '')
-  + '\nexport { shopEntries, bagEntries, availableTokens, shopPrice, eggPrice, itemLabel, burnTier, mood, moodLabel };\n')
+  + '\nexport { shopEntries, bagEntries, availableTokens, shopPrice, eggPrice, itemLabel, burnTier, mood, moodLabel, barTooltip };\n')
 const B = await import(shim)
 
 let fails = 0
@@ -117,6 +117,56 @@ eq('90% cansa', B.mood(st({ burnRate: 10 }), 5e6, 0.90), 'tired')
 console.log('\n--- todo humor tem rótulo ---')
 for (const m of ['egg', 'idle', 'working', 'focus', 'tired', 'sleep', 'levelUp'])
   eq(`rótulo de ${m}`, B.moodLabel(m).length > 0, true)
+
+console.log('\n--- tooltip do bar: sem espécie fixada ---')
+const semPin = B.barTooltip({
+  hatched: true, companionName: 'Crawdaunt', rarity: 'common',
+  stage: 1, totalForms: 2, remaining: 41700000, isFinalStage: true,
+  pinnedName: '', todayTokens: 64300000
+})
+eq('abre com o companion', semPin.split('\n')[0], 'Crawdaunt')
+eq('não menciona fixado', semPin.indexOf('fixado') === -1, true)
+eq('tem o estágio', semPin.indexOf('estágio 2/2') !== -1, true)
+
+console.log('\n--- tooltip do bar: COM espécie fixada ---')
+// O bug: o bar mostrava o nome da fixada com o estágio do companion real, e
+// "Corphish · estágio 2/2" é contradição — o Corphish É o estágio 1.
+const comPin = B.barTooltip({
+  hatched: true, companionName: 'Crawdaunt', rarity: 'common',
+  stage: 1, totalForms: 2, remaining: 41700000, isFinalStage: true,
+  pinnedName: 'Corphish', todayTokens: 64300000
+})
+const linhas = comPin.split('\n')
+eq('a primeira linha diz que é fixada', linhas[0], 'Corphish ★ fixado no bar')
+// O separador é "  ·  " (espaço duplo), como no resto do painel.
+eq('o estágio é atribuído ao companion, não à fixada',
+   linhas[1], 'Companion: Crawdaunt  ·  Comum  ·  estágio 2/2')
+eq('a fixada NUNCA aparece colada num estágio',
+   /Corphish[^\n]*estágio/.test(comPin), false)
+eq('o progresso continua visível', comPin.indexOf('41.7M') !== -1, true)
+
+console.log('\n--- tooltip do bar: ovo ---')
+const ovo = B.barTooltip({
+  hatched: false, companionName: 'Ovo', rarity: 'common',
+  stage: 0, totalForms: 2, hatchRemaining: 1500000,
+  pinnedName: '', todayTokens: 0
+})
+eq('fala de chocar', ovo.indexOf('até chocar') !== -1, true)
+eq('sem estágio', ovo.indexOf('estágio') === -1, true)
+
+console.log('\n--- tooltip do bar: ovo com espécie fixada ---')
+const ovoPin = B.barTooltip({
+  hatched: false, companionName: 'Ovo', rarity: 'common',
+  stage: 0, totalForms: 1, hatchRemaining: 1500000,
+  pinnedName: 'Pikachu', todayTokens: 0
+})
+eq('diz que é fixada', ovoPin.split('\n')[0], 'Pikachu ★ fixado no bar')
+eq('e que o companion é um ovo',
+   ovoPin.indexOf('Companion: Ovo') !== -1, true)
+
+console.log('\n--- tooltip do bar: dados faltando não quebram ---')
+eq('objeto vazio devolve string', typeof B.barTooltip({}), 'string')
+eq('nulo devolve string', typeof B.barTooltip(null), 'string')
 
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTodos os testes passaram')
 process.exit(fails ? 1 : 0)

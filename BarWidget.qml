@@ -515,22 +515,20 @@ BarWidget {
     // do conteúdo real. BarIconButton não serve: ele fixa a largura no slot de
     // um ícone e um sprite não-quadrado com texto ao lado não cabe.
     fixedWidth: root.vertical ? -1 : content.implicitWidth + Style.space(12)
-    tooltipText: {
-      var parts = [root.barName]
-      if (root.hatched) {
-        parts.push(Balance.rarityLabel(root.rarity)
-                   + " · estágio " + (root.stage + 1) + "/" + root.totalForms)
-        parts.push(Balance.formatTokens(root.progress.remaining) + " tokens até "
-                   + (root.progress.isFinalStage ? "graduar" : "evoluir"))
-      } else {
-        parts.push(Balance.formatTokens(Math.max(0, root.hatchThreshold - root.tokensIntoStage))
-                   + " tokens até chocar")
-      }
-      if (root.representative)
-        parts.push("fixado — o companion real está no painel")
-      if (root.todayTokens > 0) parts.push("Hoje: " + Balance.formatTokens(root.todayTokens))
-      return parts.join("\n")
-    }
+    tooltipText: Balance.barTooltip({
+      hatched: root.hatched,
+      companionName: root.displayName,
+      rarity: root.rarity,
+      stage: root.stage,
+      totalForms: root.totalForms,
+      remaining: root.progress ? root.progress.remaining : 0,
+      isFinalStage: root.progress ? root.progress.isFinalStage : false,
+      hatchRemaining: Math.max(0, root.hatchThreshold - root.tokensIntoStage),
+      // Quando há espécie fixada, o nome dela NUNCA é colado no estágio: o
+      // tooltip a anuncia como fixada e nomeia o companion real à parte.
+      pinnedName: root.representative ? root.barName : "",
+      todayTokens: root.todayTokens
+    })
 
     onPressed: function (b) {
       if (b === Qt.MiddleButton) root.refresh()
@@ -542,26 +540,51 @@ BarWidget {
       anchors.centerIn: parent
       spacing: Style.space(5)
 
-      AnimatedImage {
-        id: sprite
-        source: root.barSprite ? "file://" + root.barSprite : ""
-        visible: source != ""
-        playing: visible
+      // A caixa dimensiona pelo sourceSize e o sprite a preenche. O inverso —
+      // caixa medindo o sprite que ancora na caixa — é laço de binding.
+      Item {
+        id: spriteBox
         anchors.verticalCenter: parent.verticalCenter
+        visible: sprite.source != ""
         height: root.spriteSize
         // Os sprites Gen-V não são quadrados (36x66, 59x68…), então a largura
         // acompanha a proporção em vez de esticar o bicho.
-        width: sourceSize.height > 0
-               ? Math.round(root.spriteSize * sourceSize.width / sourceSize.height)
+        width: sprite.sourceSize.height > 0
+               ? Math.round(root.spriteSize * sprite.sourceSize.width
+                            / sprite.sourceSize.height)
                : root.spriteSize
-        fillMode: Image.PreserveAspectFit
-        smooth: false  // pixel art: interpolar borra o sprite
+
+        AnimatedImage {
+          id: sprite
+          anchors.fill: parent
+          source: root.barSprite ? "file://" + root.barSprite : ""
+          playing: visible
+          fillMode: Image.PreserveAspectFit
+          smooth: false  // pixel art: interpolar borra o sprite
+        }
+
+        // A estrela marca "esta não é a espécie que você está criando". Fica no
+        // bar, não só no tooltip: depender do hover foi exatamente o que deixou
+        // a pessoa sem saber em que estágio estava.
+        Text {
+          visible: root.representative !== null
+          anchors.top: parent.top
+          anchors.right: parent.right
+          anchors.topMargin: -Style.space(3)
+          anchors.rightMargin: -Style.space(3)
+          z: 1
+          textFormat: Text.PlainText
+          text: "★"
+          color: Color.urgent
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+        }
       }
 
       // Ovo antes de chocar; pokébola no intervalo entre chocar e o helper
       // terminar de baixar o GIF.
       Text {
-        visible: !sprite.visible
+        visible: !spriteBox.visible
         anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.PlainText
         text: root.hatched ? "󰐝" : "󰪯"

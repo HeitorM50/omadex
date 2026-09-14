@@ -293,6 +293,52 @@ function speciesLabel(name) {
   }).join(" ")
 }
 
+// Tooltip do bar.
+//
+// Existe como função pura por causa de um bug: quando havia espécie fixada, o
+// bar mostrava o NOME dela colado no ESTÁGIO do companion real —
+// "Corphish · estágio 2/2", que é contradição, porque o Corphish É o estágio 1.
+// Quem olhava não tinha como saber em que estágio estava.
+//
+// A regra que este texto garante: a espécie fixada nunca aparece na mesma linha
+// que um estágio ou um progresso. Ela é anunciada como fixada, e o companion
+// real é nomeado junto do seu próprio estágio.
+function barTooltip(o) {
+  var d = o || {}
+  var parts = []
+  var pinned = String(d.pinnedName || "")
+  var companion = String(d.companionName || "—")
+
+  if (pinned) {
+    parts.push(pinned + " ★ fixado no bar")
+    // "Companion:" nomeia de quem é o estágio. Sem esse prefixo o leitor
+    // atribui o número à espécie da linha de cima.
+    parts.push("Companion: " + companion
+               + (d.hatched
+                  ? "  ·  " + rarityLabel(d.rarity)
+                    + "  ·  estágio " + ((d.stage | 0) + 1) + "/" + Math.max(1, d.totalForms | 0)
+                  : ""))
+  } else {
+    parts.push(companion)
+    if (d.hatched) {
+      parts.push(rarityLabel(d.rarity)
+                 + "  ·  estágio " + ((d.stage | 0) + 1) + "/" + Math.max(1, d.totalForms | 0))
+    }
+  }
+
+  if (d.hatched) {
+    parts.push(formatTokens(d.remaining) + " tokens até "
+               + (d.isFinalStage ? "graduar" : "evoluir"))
+  } else {
+    parts.push(formatTokens(d.hatchRemaining) + " tokens até chocar")
+  }
+
+  if ((Number(d.todayTokens) || 0) > 0)
+    parts.push("Hoje: " + formatTokens(d.todayTokens))
+
+  return parts.join("\n")
+}
+
 // ---- Records do omarchy.agents -------------------------------------------
 
 // Total de tokens de um record de uso, somando as quatro contagens que o
