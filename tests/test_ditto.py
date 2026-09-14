@@ -117,15 +117,9 @@ r = Roll(0)
 ps_mod.roll_ditto("common", 2, r)
 eq("sorteia sobre DITTO_RATE", r.bound, 128)
 
-print("\n--- o shiny fica escondido enquanto disfarçado ---")
-eq("shiny + disfarçado -> não mostra shiny",
-   ps_mod.visible_shiny({"shiny": True, "dittoDisguise": True}), False)
-eq("shiny sem disfarce -> mostra",
-   ps_mod.visible_shiny({"shiny": True, "dittoDisguise": False}), True)
-eq("shiny depois de revelado -> mostra",
-   ps_mod.visible_shiny({"shiny": True, "dittoDisguise": True,
-                         "dittoRevealed": True}), True)
-eq("campos ausentes", ps_mod.visible_shiny({}), False)
+# A regra "shiny escondido enquanto disfarçado" é de exibição, então vive onde é
+# aplicada: em Collection.js (projeção do dex e do histórico) e no BarWidget
+# (que lê o companion direto). Coberta em tests/test_dex.mjs.
 
 print("\n--- a chocagem grava o disfarce ---")
 
@@ -161,7 +155,7 @@ with Sandbox() as sb:
     disfarce = sb.read('companion.json')
     eq("chocou disfarçado e shiny", (disfarce['dittoDisguise'], disfarce['shiny']),
        (True, True))
-    eq("mas o shiny não é visível", ps.visible_shiny(disfarce), False)
+    eq("o disfarce está registrado", disfarce['dittoDisguise'], True)
 
     # A linha do Ditto: uma forma só.
     ps.evolution_line = lambda base_id: [{'id': 132, 'name': 'ditto'}]
@@ -182,7 +176,7 @@ with Sandbox() as sb:
     eq("revelou-se Ditto", c['baseSpeciesId'], 132)
     eq("marcado como revelado", c['dittoRevealed'], True)
     eq("o shiny sobreviveu", c['shiny'], True)
-    eq("e agora é visível", ps.visible_shiny(c), True)
+    eq("e consta revelado", c['dittoRevealed'], True)
     eq("linha de uma forma", len(c['evolutionLine']), 1)
     eq("raridade recalculada (capture_rate 35 = rare)", c['rarity'], 'rare')
     eq("voltou ao estágio 0 da linha nova", s['stage'], 0)
@@ -244,6 +238,33 @@ with Sandbox() as sb:
                and e.get('releasedAt') is None]
     eq("uma entrada aberta só", len(abertas), 1)
     eq("a entrada aberta agora é do Ditto", abertas[0]['speciesId'], 132)
+
+print("\n--- a revelação libera o ✨ na entrada da coleção ---")
+with Sandbox() as sb:
+    ps = stub(load_helper())
+    ps.roll_ditto = lambda rarity, forms, rng=None: True
+    ps.roll_shiny = lambda rng=None, denominator=64: True
+    sb.put_state()
+    ps.cmd_hatch([])
+    e = ps.load_collection()['entries'][0]
+    eq("entrada nasce disfarçada", e['dittoDisguise'], True)
+    eq("e não revelada", e['dittoRevealed'], False)
+    eq("com o shiny bruto guardado", e['shiny'], True)
+
+    ps.evolution_line = lambda b: [{'id': 132, 'name': 'ditto'}]
+    ps.load_index = lambda **kw: [{'id': 132, 'name': 'ditto', 'captureRate': 35,
+                                   'isLegendary': False, 'isMythical': False}]
+    sb.marcar_regua(ps)
+    sb.put_state(hatched=True, stage=0, tokensIntoStage=70_000_000,
+                 lastSeen=sb.read('state.json')['lastSeen'], candySeeded=True)
+    sb.bump('claude', 10_000_000)
+    ps.cmd_absorb(['0.3'])
+
+    e = ps.load_collection()['entries'][0]
+    eq("a entrada passa a constar revelada", e['dittoRevealed'], True)
+    eq("o disfarce continua registrado (é a história dele)", e['dittoDisguise'], True)
+    eq("shiny preservado", e['shiny'], True)
+
 
 print(f"\n{fails} FALHA(S)" if fails else "\nTodos os testes passaram")
 raise SystemExit(1 if fails else 0)

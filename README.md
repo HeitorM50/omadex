@@ -187,6 +187,8 @@ bin/poke-sync index              # reconstrói o índice das 329 espécies base
 bin/poke-sync hatch [raridade]   # sorteia uma espécie e resolve a linha
 bin/poke-sync sprites <ids...>   # (re)baixa sprites
 bin/poke-sync absorb <dif> [seed]  # acumula tokens e avança a progressão
+bin/poke-sync buy <item> <dif> [grau]   # compra (rareCandy|mint|shinyCharm|egg)
+bin/poke-sync use <item> <dif>          # usa da bag (rareCandy|mint)
 ```
 
 Sprites são os GIFs animados Gen-V de
@@ -202,10 +204,11 @@ tests/test_absorb.py       # absorção e integração, contra os records reais
 tests/test_economy.py      # carteira, preços, candy, ovos, taxa de queima
 tests/test_ditto.py        # disfarce, shiny escondido, revelação
 tests/test_dex.mjs         # projeção do Pokédex, ownsSpecies, 2×
-tests/test_shop.mjs        # lista da loja, bag, humor
+tests/test_shop.mjs        # lista da loja, bag, humor, tooltip do bar
+tests/test_resilience.py   # o que acontece quando a rede falha no meio
 ```
 
-331 asserções. As que mais importam:
+404 asserções. As que mais importam:
 
 - **Usar candy não aumenta a carteira** (`test_economy.py`): a carteira é
   lifetime menos gasto, então somar o XP da candy ao lifetime faria de cada
@@ -221,8 +224,15 @@ tests/test_shop.mjs        # lista da loja, bag, humor
   como identidade de entrada.
 - **O ✨ só marca espécies alcançadas** (`test_dex.mjs`): um shiny que parou na
   forma base não dá o brilho na evolução que ele nunca virou.
-- **O Ditto esconde o shiny até revelar** (`test_ditto.py`), e a revelação não
-  gradua a espécie do disfarce para o Pokédex.
+- **O Ditto esconde o shiny até revelar** (`test_ditto.py` e `test_dex.mjs`), em
+  toda parte: bar, painel, Pokédex e histórico. A revelação não gradua a espécie
+  do disfarce.
+- **Rede caindo no meio de uma operação** (`test_resilience.py`) não deixa
+  graduação fantasma, entrada duplicada nem token cobrado sem entrega. Foi a
+  falta desta suíte que deixou esses três passarem por 349 asserções: todos os
+  outros stubs substituem a rede por funções que sempre funcionam.
+- **O limiar que a UI mostra é o que o helper cobra**, com e sem o bônus de 2×
+  (`test_shop.mjs`).
 
 Nenhum dos três toca a rede nem o seu estado real.
 

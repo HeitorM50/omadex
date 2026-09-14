@@ -91,7 +91,6 @@ BarWidget {
   }
 
   readonly property real burnRate: progressState ? (progressState.burnRate || 0) : 0
-  readonly property var worstLimit2: worstLimit
   readonly property string mood: Balance.mood(progressState, todayTokens,
                                               worstLimit ? worstLimit.percent : 0,
                                               celebration > 0 && eventFresh)
@@ -141,8 +140,11 @@ BarWidget {
   //      arquivos por conta própria quando absorve.
   property var records: ({})
 
+  // O bônus tem de chegar aqui, senão a barra mostra o dobro do que falta e o
+  // Pokémon evolui com ela pela metade.
   readonly property var progress: Balance.progress(rarity, totalForms, stage,
-                                                   tokensIntoStage, difficulty)
+                                                   tokensIntoStage, difficulty,
+                                                   growthBoost ? 2 : 1)
   readonly property real hatchThreshold: Balance.hatchThreshold(difficulty)
 
   readonly property real todayTokens: {

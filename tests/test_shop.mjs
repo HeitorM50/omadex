@@ -15,7 +15,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ptb-shop-'))
 const shim = join(dir, 'balance.mjs')
 writeFileSync(shim,
   readFileSync(join(PLUGIN, 'Balance.js'), 'utf8').replace(/^\.pragma library\s*/m, '')
-  + '\nexport { shopEntries, bagEntries, availableTokens, shopPrice, eggPrice, itemLabel, burnTier, mood, moodLabel, barTooltip };\n')
+  + '\nexport { shopEntries, bagEntries, availableTokens, shopPrice, eggPrice, itemLabel, burnTier, mood, moodLabel, barTooltip, phaseThreshold, progress };\n')
 const B = await import(shim)
 
 let fails = 0
@@ -167,6 +167,24 @@ eq('e que o companion é um ovo',
 console.log('\n--- tooltip do bar: dados faltando não quebram ---')
 eq('objeto vazio devolve string', typeof B.barTooltip({}), 'string')
 eq('nulo devolve string', typeof B.barTooltip(null), 'string')
+
+console.log('\n--- o limiar exibido respeita o bônus de 2x ---')
+// O bug: o helper divide o limiar pelo multiplicador quando a linha já graduou,
+// mas a UI não recebia o parâmetro — então mostrava o dobro do que falta, e o
+// Pokémon evoluía com a barra pela metade.
+eq('sem bônus', B.phaseThreshold('common', 2, 0, 0.3, 1), 75000000)
+eq('com bônus 2x', B.phaseThreshold('common', 2, 0, 0.3, 2), 37500000)
+eq('multiplicador ausente = sem bônus', B.phaseThreshold('common', 2, 0, 0.3), 75000000)
+eq('bônus em linha de 3 formas', B.phaseThreshold('rare', 3, 2, 1, 2), 750000000)
+
+console.log('\n--- progress() propaga o bônus ---')
+const semB = B.progress('common', 2, 0, 37500000, 0.3, 1)
+const comB = B.progress('common', 2, 0, 37500000, 0.3, 2)
+eq('sem bônus está na metade', semB.fraction, 0.5)
+eq('com bônus está cheio', comB.fraction, 1)
+eq('com bônus não falta nada', comB.remaining, 0)
+eq('com bônus está completo', comB.complete, true)
+eq('o limiar exibido é o do bônus', comB.threshold, 37500000)
 
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTodos os testes passaram')
 process.exit(fails ? 1 : 0)

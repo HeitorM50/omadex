@@ -125,6 +125,46 @@ O contrato está documentado em
 `/usr/share/omarchy/shell/plugins/agents/README.md`, seção *Data*. Se precisar
 de um campo novo, leia de lá; não invente.
 
+### 10. Uma entrada da coleção nunca é reaberta
+
+`sync_open_entry` não abre entrada para um `companionId` que já existe **em
+qualquer estado**. Sem essa guarda, uma chocagem que falhou por rede deixava
+`companion.json` descrevendo o bicho já graduado, e a absorção seguinte o
+acrescentava de novo como aberta: o mesmo indivíduo duas vezes no histórico, e o
+graduado voltando a ser companion no estágio 0.
+
+Pelo mesmo motivo, `cmd_absorb` trata "`hatched` verdadeiro sem companion" como
+ovo aguardando sorteio. O fallback `companion or {}` daria uma linha fantasma de
+uma forma, que gradua quase na hora — já medi `graduations=1` com a coleção
+vazia.
+
+### 11. A rede nunca roda fora do lock, e o lock nunca é infinito
+
+`cmd_buy` e `cmd_use` passam a escrita da coleção e a chocagem no parâmetro
+`after` do `_with_state_lock`, que roda **dentro** do lock. Antes rodavam fora,
+porque o `return` do `_with_state_lock` está dentro do `with` e solta o lock ao
+retornar — fácil de não notar.
+
+Como consequência, quem pede o lock espera por rede, então a aquisição tem
+timeout (`LOCK_TIMEOUT`): uma compra devolve erro em vez de pendurar o clique.
+
+E toda chamada a `cmd_hatch` fora do próprio `cmd_hatch` é envolvida em
+`try/except`: uma falha de rede não pode abortar a operação que a chamou, porque
+o estado já está coerente e a próxima passada tenta de novo.
+
+### 12. O shiny visível é calculado em dois lugares, e isso é certo
+
+A regra "um Ditto disfarçado esconde o brilho" vale em toda parte. Ela existe em
+`Collection.js` (`visibleShiny`, para a projeção do dex e do histórico, que opera
+sobre entradas) e em `BarWidget.qml` (`visibleShiny`, para o bar, que lê
+`companion.json` direto). Formatos de dado diferentes, mesma regra — não é
+duplicação a eliminar. Havia uma terceira cópia em Python que não era usada por
+ninguém; foi removida.
+
+Por isso a entrada da coleção carrega `dittoDisguise` e `dittoRevealed` ao lado
+do `shiny` bruto: o bicho **é** shiny, e quem decide se pode aparecer é a
+exibição.
+
 ## Ferramentas: cuidado com falso negativo
 
 - **`qmlformat` e `qmllint` não parseiam `function f(): void`** nesta build do
@@ -144,7 +184,8 @@ tests/test_absorb.py          # acumulação e integração, contra os records r
 tests/test_economy.py         # carteira, preços, candy, ovos, taxa de queima
 tests/test_ditto.py           # o easter egg: disfarce, shiny escondido, revelação
 tests/test_dex.mjs            # projeção do Pokédex, ownsSpecies, 2×
-tests/test_shop.mjs           # lista da loja, bag, humor
+tests/test_shop.mjs           # lista da loja, bag, humor, tooltip
+tests/test_resilience.py      # falha de rede no meio das operações
 bin/poke-sync index           # reconstrói o índice (deve dar 329 espécies base)
 bin/poke-sync hatch           # sorteia e baixa sprites
 omarchy restart shell         # única forma confiável de testar QML novo
@@ -158,6 +199,11 @@ ps.roll_shiny = lambda rng=None, denominator=64: True
 ps.roll_ditto = lambda rarity, forms, rng=None: True
 ps.cmd_hatch([])
 ```
+
+Para simular rede fora, troque `load_index` (ou `evolution_line`) por algo que
+levante `urllib.error.URLError` — é o que `tests/test_resilience.py` faz. Todos
+os outros stubs substituem a rede por funções que sempre funcionam, e foi essa
+lacuna que deixou passar três bugs de estado incoerente.
 
 O `cmd_absorb` só roda a progressão quando há **delta novo de tokens** — é o que
 o original faz. Um teste que injeta `tokensIntoStage` e espera evolução não vai

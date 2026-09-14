@@ -45,14 +45,20 @@ function clampDifficulty(value) {
 //
 // A soma sobre todos os estágios é exatamente T, então a graduação cai no total
 // prometido pela raridade sem depender do tamanho da linha.
-function phaseThreshold(rarity, totalForms, stageIndex, difficulty) {
+// `growthMultiplier` DIVIDE o limiar: 2 significa "cresce duas vezes mais
+// rápido". Ele existe aqui porque o helper o aplica, e este arquivo é a leitura
+// do que o helper escreve — sem o parâmetro, a barra mostrava o dobro do que
+// faltava e o Pokémon evoluía com ela pela metade.
+function phaseThreshold(rarity, totalForms, stageIndex, difficulty, growthMultiplier) {
   var k = Math.max(1, totalForms | 0)
   var i = Math.max(0, stageIndex | 0) + 1
   if (i > k) i = k
 
   var denom = (k * (k + 1)) / 2
   var base = Math.round(graduationTotal(rarity) * i / denom)
-  return Math.max(1, Math.round(base * clampDifficulty(difficulty)))
+  var scaled = Math.round(base * clampDifficulty(difficulty))
+  var mult = Math.max(1, growthMultiplier | 0)
+  return Math.max(1, Math.round(scaled / mult))
 }
 
 // Limiar do ovo, também sujeito à dificuldade.
@@ -62,9 +68,10 @@ function hatchThreshold(difficulty) {
 
 // Progresso dentro do estágio atual, dados os tokens acumulados desde que o
 // estágio começou. Devolve tudo o que o painel e o bar precisam desenhar.
-function progress(rarity, totalForms, stageIndex, tokensIntoStage, difficulty) {
+function progress(rarity, totalForms, stageIndex, tokensIntoStage, difficulty,
+                  growthMultiplier) {
   var k = Math.max(1, totalForms | 0)
-  var threshold = phaseThreshold(rarity, k, stageIndex, difficulty)
+  var threshold = phaseThreshold(rarity, k, stageIndex, difficulty, growthMultiplier)
   var into = Math.max(0, tokensIntoStage)
   return {
     threshold: threshold,

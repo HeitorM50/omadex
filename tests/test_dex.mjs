@@ -16,7 +16,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ptb-dex-'))
 const shim = join(dir, 'collection.mjs')
 writeFileSync(shim,
   readFileSync(join(PLUGIN, 'Collection.js'), 'utf8').replace(/^\.pragma library\s*/m, '')
-  + '\nexport { dexEntries, catchLogRows, dexStats, speciesReached, ownsSpecies, dexCell, hasGraduatedLine };\n')
+  + '\nexport { dexEntries, catchLogRows, dexStats, speciesReached, ownsSpecies, dexCell, hasGraduatedLine, visibleShiny };\n')
 const C = await import(shim)
 
 let fails = 0
@@ -39,7 +39,12 @@ const entry = (o = {}) => ({
   line: o.line ?? [{ id: 341, name: 'corphish' }, { id: 342, name: 'crawdaunt' }],
   hatchedAt: o.hatchedAt ?? 1000,
   graduatedAt: o.graduatedAt ?? null,
+  releasedAt: o.releasedAt ?? null,
   finalStage: o.finalStage ?? 0,
+  // Campos do Ditto: o factory tem de repassá-los, senão um teste que passa
+  // `dittoDisguise: true` é silenciosamente ignorado.
+  dittoDisguise: o.dittoDisguise ?? false,
+  dittoRevealed: o.dittoRevealed ?? false,
 })
 const col = (...entries) => ({ schemaVersion: 1, entries })
 
@@ -151,6 +156,34 @@ eq('graduada sem chegar ao fim não conta',
 eq('liberada não conta',
    C.hasGraduatedLine(col(entry({ finalStage: 1, graduatedAt: null,
                                  releasedAt: 9 })), 341), false)
+
+console.log('\n--- o ✨ de um Ditto disfarçado fica escondido no dex e no histórico ---')
+// O README e o helper prometem que o brilho fica escondido EM TODA PARTE até a
+// revelação. O bar e a aba Companion respeitavam; o dex e o histórico não,
+// porque a projeção não sabia do disfarce.
+const disfarcado = col(entry({ shiny: true, dittoDisguise: true,
+                               dittoRevealed: false }))
+eq('a célula do dex não brilha', C.dexEntries(disfarcado)[0].shiny, false)
+eq('a linha do histórico não brilha', C.catchLogRows(disfarcado)[0].shiny, false)
+eq('e não conta nas estatísticas', C.dexStats(disfarcado).shiny, 0)
+
+const revelado = col(entry({ shiny: true, dittoDisguise: true,
+                             dittoRevealed: true }))
+eq('depois de revelar, brilha no dex', C.dexEntries(revelado)[0].shiny, true)
+eq('e no histórico', C.catchLogRows(revelado)[0].shiny, true)
+eq('e conta nas estatísticas', C.dexStats(revelado).shiny, 1)
+
+const normalShiny = col(entry({ shiny: true }))
+eq('shiny sem disfarce nenhum brilha', C.dexEntries(normalShiny)[0].shiny, true)
+
+console.log('\n--- visibleShiny é a mesma regra do helper ---')
+eq('shiny + disfarçado', C.visibleShiny({ shiny: true, dittoDisguise: true }), false)
+eq('shiny + revelado',
+   C.visibleShiny({ shiny: true, dittoDisguise: true, dittoRevealed: true }), true)
+eq('shiny sem disfarce', C.visibleShiny({ shiny: true }), true)
+eq('não shiny', C.visibleShiny({ shiny: false, dittoDisguise: true }), false)
+eq('vazio', C.visibleShiny({}), false)
+eq('nulo', C.visibleShiny(null), false)
 
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTodos os testes passaram')
 process.exit(fails ? 1 : 0)

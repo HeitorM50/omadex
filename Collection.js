@@ -26,6 +26,19 @@ function speciesReached(entry) {
   return out
 }
 
+// O shiny que pode ser MOSTRADO — a mesma regra do `visible_shiny` do helper.
+//
+// Um Ditto ainda disfarçado esconde o brilho em toda parte, dex e histórico
+// incluídos: revelar o Ditto e o shiny juntos é o ponto alto do easter egg, e
+// mostrar o ✨ na célula antes disso entrega a surpresa. A entrada guarda o
+// shiny bruto (ele É shiny) e o estado de disfarce; quem decide é aqui.
+function visibleShiny(entry) {
+  var e = entry || {}
+  if (e.shiny !== true) return false
+  if (e.dittoDisguise === true && e.dittoRevealed !== true) return false
+  return true
+}
+
 function entriesOf(collection) {
   return collection && Array.isArray(collection.entries) ? collection.entries : []
 }
@@ -42,7 +55,7 @@ function dexEntries(collection) {
   for (var i = 0; i < all.length; i++) {
     var entry = all[i]
     var forms = speciesReached(entry)
-    var isShiny = entry.shiny === true
+    var isShiny = visibleShiny(entry)
 
     for (var f = 0; f < forms.length; f++) {
       var form = forms[f]
@@ -86,7 +99,7 @@ function catchLogRows(collection) {
       finalName: latest ? (latest.name || String(latest.id)) : (entry.name || ""),
       sprite: latest && latest.sprite ? latest.sprite : "",
       rarity: entry.rarity || "common",
-      shiny: entry.shiny === true,
+      shiny: visibleShiny(entry),
       hatchedAt: entry.hatchedAt || 0,
       graduatedAt: entry.graduatedAt || null,
       finalStage: entry.finalStage | 0,

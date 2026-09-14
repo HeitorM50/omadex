@@ -7,6 +7,8 @@ bin/gcal-sync: credencial e rede ficam fora do processo do shell.
 
 Subcomandos:
   absorb <dif>     acumula os tokens novos dos records e avança a progressão
+  buy <item> <dif> [grau]   compra na loja (rareCandy|mint|shinyCharm|egg)
+  use <item> <dif>          usa um item da bag (rareCandy|mint)
   hatch            sorteia uma espécie base, resolve a linha e baixa os sprites
   sprites <ids>    (re)baixa os sprites dessas espécies
   index            reconstrói o índice de candidatos e sai
@@ -477,7 +479,6 @@ DEFAULT_STATE = {
     "candySeeded": False,
     "eggTier": None,
     "burnRate": 0,
-    "lastAbsorbAt": 0,
     "lastGainAt": 0,
 }
 
@@ -601,7 +602,15 @@ def cmd_absorb(argv: list[str]) -> int:
             else:
                 state["tokensIntoStage"] += gained
 
-            if state["hatched"]:
+            if state["hatched"] and not companion:
+                # O estado diz chocado mas não há companion: o sorteio da
+                # espécie falhou (rede). Sem linha não há limiar, e o fallback
+                # `companion or {}` daria uma linha fantasma de uma forma que
+                # gradua quase na hora — já vi acontecer: graduations=1 com a
+                # coleção vazia e a notificação de nome vazio.
+                state["hatched"] = False
+                hatch_requested = True
+            elif state["hatched"]:
                 # Avança quantos estágios os tokens cobrirem. Um dia pesado pode
                 # cobrir mais de um, e avançar só um por execução deixaria
                 # tokens presos.
@@ -631,7 +640,6 @@ def cmd_absorb(argv: list[str]) -> int:
             anterior = int(state.get("lastGainAt") or 0)
             state["burnRate"] = burn_rate(gained, now - anterior) if anterior else 0
             state["lastGainAt"] = now
-        state["lastAbsorbAt"] = now
 
         # Candies por janela cheia. Roda a cada absorção, antes da escrita, e
         # é independente de ter havido delta: bater o limite não exige tokens
@@ -683,6 +691,9 @@ def cmd_absorb(argv: list[str]) -> int:
                                      for f in revealed["evolutionLine"]
                                      if f.get("id")]
                     entry["finalStage"] = 0
+                    # Libera o ✨ no dex e no histórico: até aqui a projeção o
+                    # escondia porque a entrada constava disfarçada.
+                    entry["dittoRevealed"] = True
                     save_collection(collection)
                 notify("🎭 Era um Ditto!",
                        "O seu companion nunca foi o que dizia ser."
@@ -690,8 +701,13 @@ def cmd_absorb(argv: list[str]) -> int:
 
         if hatch_requested:
             # cmd_hatch escreve o companion novo e abre a entrada dele, já com a
-            # anterior fechada acima.
-            cmd_hatch([])
+            # anterior fechada acima. Uma falha de rede aqui não pode abortar a
+            # absorção: o estado já está coerente (ovo sem espécie sorteada), e a
+            # próxima passada tenta de novo.
+            try:
+                cmd_hatch([])
+            except Exception as exc:  # noqa: BLE001
+                log(f"chocagem falhou ({exc}); será tentada na próxima absorção")
 
     for grant in grants:
         # A notificação diz QUAL janela, como no original — sem isso a pessoa
@@ -1016,19 +1032,6 @@ def roll_ditto(rarity: str, total_forms: int, rng=None) -> bool:
     return source.randrange(DITTO_RATE) == 0
 
 
-def visible_shiny(companion: dict) -> bool:
-    """O shiny que a interface deve mostrar.
-
-    Um shiny ainda disfarçado é escondido em toda parte — bar, painel, dex.
-    """
-    c = companion or {}
-    if c.get("shiny") is not True:
-        return False
-    if c.get("dittoDisguise") and not c.get("dittoRevealed"):
-        return False
-    return True
-
-
 def reveal_ditto(companion: dict, now: int) -> dict | None:
     """Troca o companion disfarçado pelo Ditto, preservando o indivíduo.
 
@@ -1130,7 +1133,12 @@ def entry_from_companion(companion: dict, now: int) -> dict:
         "name": companion.get("name") or "",
         "rarity": companion.get("rarity") or "common",
         # companion.json da v1 não tinha o campo; ausente é normal, não shiny.
+        # Guardamos o shiny BRUTO: ele é shiny de verdade. Quem decide se pode
+        # ser mostrado é a projeção, que precisa saber do disfarce — por isso os
+        # dois campos abaixo viajam com a entrada.
         "shiny": companion.get("shiny") is True,
+        "dittoDisguise": companion.get("dittoDisguise") is True,
+        "dittoRevealed": companion.get("dittoRevealed") is True,
         # A forma inteira, não só o id: o Pokédex precisa nomear e desenhar
         # espécies que nunca foram forma base de nada — um Crawdaunt não existe
         # no índice de chocagem — e não haveria de onde buscar isso depois.
@@ -1165,6 +1173,14 @@ def sync_open_entry(collection: dict, companion: dict, now: int) -> bool:
                 and entry.get("companionId") != key):
             entry["graduatedAt"] = now
             changed = True
+
+    # Um companionId que já está na coleção — em QUALQUER estado — nunca é
+    # reaberto. Sem esta guarda, uma chocagem que falhou por rede deixava
+    # companion.json descrevendo o bicho já graduado (ou liberado), e a absorção
+    # seguinte o acrescentava de novo como entrada aberta: o mesmo indivíduo
+    # aparecia duas vezes, e o graduado voltava a ser companion no estágio 0.
+    if any(e.get("companionId") == key for e in collection["entries"]):
+        return changed
 
     if open_entry(collection) is None:
         collection["entries"].append(entry_from_companion(companion, now))
@@ -1303,20 +1319,48 @@ def cmd_index(_argv: list[str]) -> int:
     return 0
 
 
-def _with_state_lock(fn):
+# Quanto uma compra ou uso espera pelo lock antes de desistir. O absorb pode
+# segurá-lo durante rede (a chocagem roda dentro dele), então esperar um pouco é
+# normal; esperar para sempre faria o clique na loja não fazer nada visível.
+LOCK_TIMEOUT = 8.0
+
+
+def _acquire(lock, timeout: float = LOCK_TIMEOUT) -> bool:
+    """Tenta o flock até `timeout`. Devolve se conseguiu."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+
+
+def _with_state_lock(fn, after=None):
     """Roda `fn(state)` sob o mesmo flock do absorb, salvando se devolver True.
 
     Compras e usos precisam do mesmo lock que a absorção: sem isso um absorb
-    concorrente poderia sobrescrever a compra, ou vice-versa.
+    concorrente sobrescreve a compra, ou vice-versa.
+
+    `after` roda TAMBÉM dentro do lock, depois da escrita do estado. É onde
+    entram a escrita da coleção e a chocagem — elas rodavam fora do lock, que é
+    exatamente o que o invariante do CLAUDE.md proíbe.
     """
     os.makedirs(state_dir(), exist_ok=True)
     with open(lock_path(), "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)   # bloqueante: uma compra não desiste
+        if not _acquire(lock):
+            log("outra operação está em curso; tente de novo em instantes")
+            return False
         state = load_state()
         result = fn(state)
-        if result:
-            write_json(state_path(), state)
-        return result
+        if not result:
+            return False
+        write_json(state_path(), state)
+        if after is not None:
+            after()
+        return True
 
 
 def cmd_buy(argv: list[str]) -> int:
@@ -1341,7 +1385,6 @@ def cmd_buy(argv: list[str]) -> int:
 
     price = shop_price(entry, shop_difficulty)
     companion = load_companion()
-    outcome = {"ok": False}
 
     def apply(state):
         inventory = state.setdefault("inventory", {})
@@ -1371,27 +1414,40 @@ def cmd_buy(argv: list[str]) -> int:
             # Perder o progresso acumulado é o custo real do re-roll, e é o que
             # impede farmar chocagens.
             state["tokensIntoStage"] = 0
-            outcome["released"] = True
         else:
             if what in PASSIVE_ITEMS:
                 inventory[what] = True
             else:
                 inventory[what] = int(inventory.get(what) or 0) + 1
 
-        outcome["ok"] = True
         return True
 
-    if not _with_state_lock(apply):
-        return 1
-
-    if outcome.get("released"):
+    def depois():
+        """Roda dentro do lock, depois da escrita do estado."""
+        if what != "egg":
+            return
         # O descartado NÃO desaparece: entra no histórico marcado como liberado,
         # com as formas alcançadas. O que ele não faz é entrar na contagem de
         # linhas graduadas, então não paga o bônus de 2×.
         collection = load_collection()
         if release_open_entry(collection, int(time.time())):
             save_collection(collection)
-        cmd_hatch([])
+        # O companion.json do liberado tem de sair: se a chocagem abaixo falhar
+        # por rede, deixá-lo no lugar faria o painel mostrar a linha evolutiva de
+        # quem acabou de ser descartado.
+        try:
+            os.unlink(companion_path())
+        except FileNotFoundError:
+            pass
+        # Pré-sorteio da espécie nova. Se a rede estiver fora, o grau pago
+        # continua em state["eggTier"] e a próxima tentativa o honra.
+        try:
+            cmd_hatch([])
+        except Exception as exc:  # noqa: BLE001
+            log(f"pré-sorteio falhou ({exc}); o ovo e a garantia continuam seus")
+
+    if not _with_state_lock(apply, depois):
+        return 1
 
     log(f"comprou {entry} por {price}")
     return 0
@@ -1468,19 +1524,24 @@ def cmd_use(argv: list[str]) -> int:
         graduated["yes"] = advance_stages(state, rarity, total_forms, difficulty, boost)
         return True
 
-    if not _with_state_lock(apply_candy):
-        return 1
+    def depois():
+        """Roda dentro do lock, depois da escrita do estado."""
+        collection = load_collection()
+        now = int(time.time())
+        if graduated["yes"]:
+            if close_open_entry(collection, now, total_forms - 1):
+                save_collection(collection)
+            try:
+                cmd_hatch([])
+            except Exception as exc:  # noqa: BLE001
+                log(f"chocagem do ovo novo falhou ({exc}); será tentada de novo")
+        else:
+            state = load_state()
+            if record_stage(collection, int(state.get("stage") or 0)):
+                save_collection(collection)
 
-    collection = load_collection()
-    now = int(time.time())
-    if graduated["yes"]:
-        if close_open_entry(collection, now, total_forms - 1):
-            save_collection(collection)
-        cmd_hatch([])
-    else:
-        state = load_state()
-        if record_stage(collection, int(state.get("stage") or 0)):
-            save_collection(collection)
+    if not _with_state_lock(apply_candy, depois):
+        return 1
 
     log(f"usou uma Rare Candy (+{RARE_CANDY_XP})"
         + (" e graduou" if graduated["yes"] else ""))

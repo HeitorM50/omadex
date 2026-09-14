@@ -524,8 +524,10 @@ with Sandbox() as sb:
     sb.put_state(hatched=True, candySeeded=True)
     ps.cmd_absorb(['0.3'])                     # marca a régua
     primeiro = sb.read('state.json')
-    eq("gravou o instante", isinstance(primeiro.get('lastAbsorbAt'), int), True)
-    eq("taxa inicial zero", primeiro.get('burnRate'), 0)
+    # Só o instante do ÚLTIMO GANHO é guardado; o da última absorção era campo
+    # escrito e nunca lido, e foi removido.
+    eq("sem ganho, taxa zero", primeiro.get('burnRate'), 0)
+    eq("e nenhum instante de ganho", primeiro.get('lastGainAt', 0), 0)
 
 
 print("\n--- a taxa mede o intervalo entre GANHOS, não entre absorções ---")

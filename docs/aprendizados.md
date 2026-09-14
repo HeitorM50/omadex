@@ -291,3 +291,60 @@ a imagem e li a frase que o programa escrevia.
 E uma lição sobre mim: a segunda parte do conserto (a estrela) atende ao que ele
 de fato reclamou, que era não saber em que estágio estava. Consertar só o texto
 teria resolvido a contradição e deixado a ambiguidade.
+
+## 15. Os stubs que sempre funcionam esconderam os piores bugs
+
+A inspeção final achou quatro bugs, três deles invisíveis para 349 asserções. O
+que os três tinham em comum: só aparecem quando a **rede falha no meio de uma
+operação**, e nenhum teste simulava isso. Todos os stubs substituíam
+`load_index`, `evolution_line` e `hydrate_sprites` por lambdas que sempre
+devolvem sucesso.
+
+Os três, reproduzidos:
+
+- **Graduação fantasma.** Rede cai na primeira chocagem: sobra `hatched=True`
+  sem `companion.json`. A absorção seguinte roda a progressão com o fallback
+  `companion or {}` — uma linha de uma forma que gradua quase na hora. Medi
+  `graduations=1` **com a coleção vazia** e a notificação de nome vazio.
+- **Entrada duplicada.** A entrada é fechada antes da chocagem. Se ela falha,
+  `companion.json` ainda descreve o bicho antigo, e a absorção seguinte o
+  acrescenta de novo: o graduado volta a ser companion no estágio 0, para ser
+  graduado outra vez.
+- **Token cobrado sem entrega.** Compra de ovo: `spentTokens` sobe antes da rede.
+
+**A lição:** um stub que sempre dá certo testa o caminho felizardo e nada mais.
+Em sistema que fala com a rede, a suíte precisa de um teste que force a exceção —
+e ele pertence a um arquivo próprio, com nome que diga isso, senão ninguém
+lembra de estendê-lo. Virou `tests/test_resilience.py`.
+
+## 16. A leitura tem de espelhar a escrita, ou a barra mente
+
+O `phase_threshold` do helper recebe um multiplicador de crescimento e **divide**
+o limiar. O `phaseThreshold` do `Balance.js` — que é a leitura do mesmo número,
+para a UI desenhar — nunca ganhou esse parâmetro.
+
+Resultado: com o bônus de linha repetida ativo, a UI pedia 75M quando o helper
+cobrava 37,5M. O Pokémon evoluía com a barra pela metade, e o "faltam X tokens"
+errava por 37 milhões.
+
+O `CLAUDE.md` já dizia que o `Balance.js` é a leitura do que o helper escreve. O
+invariante estava escrito e eu o quebrei ao adicionar um parâmetro só de um lado.
+
+**A lição:** quando a mesma fórmula existe em duas linguagens por necessidade
+(uma cobra, a outra exibe), a mudança de assinatura em uma é mudança na outra. O
+teste que trava isso não é "a fórmula está certa", é **"as duas concordam"** — um
+cruzamento que roda os dois lados e compara. Escrevi um com 17 constantes na fase
+anterior e ele passou; o que faltou foi incluir o parâmetro novo nele.
+
+## 17. Revisão de olhos frescos no próprio código
+
+Pedi uma revisão externa porque sou o autor e tenho viés, e ela achou **três dos
+quatro bugs** — incluindo o de maior impacto no uso diário. Meu lado achou o
+código morto, a divergência de estado que eu reproduzi, e fechou com dado uma
+suspeita que a revisão levantou sem conseguir confirmar (se toda lendária tem
+`capture_rate ≤ 45`: sim, as 48, com máximo exatamente 45).
+
+A divisão que funcionou: eu fiz o que dá para automatizar e verificar
+(cruzamento de constantes, propriedades órfãs, simulação de cenário), a revisão
+fez o que exige ler o código sem saber o que ele deveria fazer. Nenhuma das duas
+teria achado tudo.
