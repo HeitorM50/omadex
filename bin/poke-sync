@@ -1,0 +1,641 @@
+#!/usr/bin/env python3
+"""Resolve uma linha evolutiva na PokéAPI e baixa os sprites dela.
+
+Este é o único lugar do plugin que fala HTTP. O QML dispara este helper por
+Process e observa o JSON que ele escreve, na mesma divisão de trabalho do
+bin/gcal-sync: credencial e rede ficam fora do processo do shell.
+
+Subcomandos:
+  absorb <dif>     acumula os tokens novos dos records e avança a progressão
+  hatch            sorteia uma espécie base, resolve a linha e baixa os sprites
+  sprites <ids>    (re)baixa os sprites dessas espécies
+  index            reconstrói o índice de candidatos e sai
+
+A saída canônica é companion.json no diretório de estado. A escrita é atômica
+(tmp + os.replace) porque o FileView do QML observa o arquivo e não pode ler um
+JSON pela metade.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import random
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+MODULE = "io.github.heitorm50.poketokenbar"
+
+API = "https://pokeapi.co/api/v2"
+SPRITES = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon"
+
+# Gen 1-5. O original limita o pool de chocagem a essas gerações porque são as
+# que têm sprite animado Black/White.
+MAX_SPECIES = 649
+
+# Hosts que o helper aceita seguir. A PokéAPI devolve URLs absolutas em
+# evolution_chain.url, e seguir cegamente uma URL vinda da rede é como o
+# original acabou com PokeAPIClient.validatedChainURL.
+ALLOWED_HOSTS = {"pokeapi.co", "graphql.pokeapi.co", "raw.githubusercontent.com"}
+
+USER_AGENT = f"{MODULE} (+https://github.com/HeitorM50)"
+TIMEOUT = 20
+
+# Limiares de capture_rate -> raridade, de CompanionModel.swift:78.
+# Um capture_rate menor significa mais difícil de capturar, logo mais raro.
+RARITY_CEILINGS = [("rare", 45), ("uncommon", 120), ("common", 255)]
+
+
+def state_dir() -> str:
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "omarchy", MODULE)
+
+
+def cache_dir() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "omarchy", MODULE)
+
+
+def sprite_dir() -> str:
+    return os.path.join(cache_dir(), "sprites")
+
+
+def log(*parts: object) -> None:
+    print(f"[{MODULE}]", *parts, file=sys.stderr)
+
+
+def write_atomic(path: str, payload: bytes) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
+def write_json(path: str, data: object) -> None:
+    write_atomic(path, json.dumps(data, ensure_ascii=False, indent=2).encode())
+
+
+def check_host(url: str) -> str:
+    """Valida o host antes de seguir uma URL vinda da rede."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
+        raise ValueError(f"URL fora da allowlist: {url}")
+    return url
+
+
+def fetch(url: str, *, binary: bool = False, retries: int = 3):
+    check_host(url)
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+                raw = response.read()
+            return raw if binary else json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            # 404 é resposta, não falha transitória: várias espécies simplesmente
+            # não têm sprite animado, e insistir só atrasa a chocagem.
+            if exc.code == 404:
+                raise
+            last = exc
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last = exc
+        if attempt + 1 < retries:
+            time.sleep(1.5 * (attempt + 1))
+    raise last if last else RuntimeError(f"falha ao buscar {url}")
+
+
+# ---- Índice de candidatos -------------------------------------------------
+#
+# Chocar precisa de (id, capture_rate) para todas as espécies base. Buscar 649
+# species pela REST é lento (649 requisições), então a primeira escolha é o
+# GraphQL, que resolve numa tacada, com a REST como plano B. O índice é
+# persistido: só é reconstruído se o cache não existir.
+
+GRAPHQL_ENDPOINT = "https://graphql.pokeapi.co/v1beta2"
+GRAPHQL_QUERY = """
+query BaseSpecies($limit: Int!) {
+  pokemonspecies(
+    where: {id: {_lte: $limit}, evolves_from_species_id: {_is_null: true}}
+    order_by: {id: asc}
+  ) {
+    id
+    name
+    capture_rate
+    is_legendary
+    is_mythical
+  }
+}
+"""
+
+
+def index_path() -> str:
+    return os.path.join(cache_dir(), "base-species.json")
+
+
+def fetch_index_graphql() -> list[dict]:
+    check_host(GRAPHQL_ENDPOINT)
+    body = json.dumps({"query": GRAPHQL_QUERY, "variables": {"limit": MAX_SPECIES}})
+    request = urllib.request.Request(
+        GRAPHQL_ENDPOINT,
+        data=body.encode(),
+        headers={"User-Agent": USER_AGENT, "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        payload = json.loads(response.read())
+    rows = (payload.get("data") or {}).get("pokemonspecies") or []
+    out = []
+    for row in rows:
+        rate = row.get("capture_rate")
+        if not isinstance(rate, int):
+            continue
+        out.append(
+            {
+                "id": row["id"],
+                "name": row.get("name") or str(row["id"]),
+                "captureRate": rate,
+                "isLegendary": bool(row.get("is_legendary")),
+                "isMythical": bool(row.get("is_mythical")),
+            }
+        )
+    if not out:
+        raise RuntimeError("GraphQL devolveu índice vazio")
+    return out
+
+
+def fetch_index_rest() -> list[dict]:
+    """Plano B: uma requisição por espécie. Lento, mas só roda uma vez."""
+    log("GraphQL indisponível, reconstruindo índice pela REST (pode levar ~2 min)")
+    out = []
+    for species_id in range(1, MAX_SPECIES + 1):
+        try:
+            data = fetch(f"{API}/pokemon-species/{species_id}")
+        except Exception as exc:  # noqa: BLE001 - uma espécie faltando não é fatal
+            log(f"espécie {species_id} ignorada: {exc}")
+            continue
+        if data.get("evolves_from_species"):
+            continue  # só formas base entram no pool de chocagem
+        rate = data.get("capture_rate")
+        if not isinstance(rate, int):
+            continue
+        out.append(
+            {
+                "id": data["id"],
+                "name": data.get("name") or str(data["id"]),
+                "captureRate": rate,
+                "isLegendary": bool(data.get("is_legendary")),
+                "isMythical": bool(data.get("is_mythical")),
+            }
+        )
+    return out
+
+
+def load_index(*, rebuild: bool = False) -> list[dict]:
+    path = index_path()
+    if not rebuild and os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                cached = json.load(handle)
+            if isinstance(cached, list) and cached:
+                return cached
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    try:
+        entries = fetch_index_graphql()
+    except Exception as exc:  # noqa: BLE001
+        log(f"GraphQL falhou ({exc})")
+        entries = fetch_index_rest()
+
+    if not entries:
+        raise RuntimeError("não foi possível construir o índice de espécies base")
+    write_json(path, entries)
+    return entries
+
+
+# ---- Raridade e sorteio ---------------------------------------------------
+
+
+def rarity_for(entry: dict) -> str:
+    if entry.get("isLegendary") or entry.get("isMythical"):
+        return "legendary"
+    rate = entry["captureRate"]
+    for name, ceiling in RARITY_CEILINGS:
+        if rate <= ceiling:
+            return name
+    return "common"
+
+
+def pick_species(entries: list[dict], *, floor: str | None = None) -> dict:
+    """Sorteia uma espécie base ponderada pelo capture_rate.
+
+    capture_rate é literalmente a facilidade de captura no jogo (3 = lendário,
+    255 = Rattata), então usá-lo como peso dá de graça a curva que o original
+    descreve: comuns aparecem toda hora, lendário é evento raro.
+    """
+    pool = entries
+    if floor:
+        order = ["common", "uncommon", "rare", "legendary"]
+        minimum = order.index(floor)
+        pool = [e for e in entries if order.index(rarity_for(e)) >= minimum] or entries
+
+    weights = [max(1, e["captureRate"]) for e in pool]
+    return random.choices(pool, weights=weights, k=1)[0]
+
+
+# ---- Linha evolutiva ------------------------------------------------------
+
+
+def evolution_line(base_id: int) -> list[dict]:
+    """A sequência de espécies da linha, da forma base à final.
+
+    Ramificações (Eevee, Gardevoir/Gallade) são resolvidas escolhendo um ramo
+    ao acaso, para que a linha seja sempre uma lista linear — o painel desenha
+    uma progressão, não uma árvore.
+    """
+    species = fetch(f"{API}/pokemon-species/{base_id}")
+    chain_url = (species.get("evolution_chain") or {}).get("url")
+    if not chain_url:
+        return [{"id": base_id, "name": species.get("name") or str(base_id)}]
+
+    chain = fetch(check_host(chain_url)).get("chain") or {}
+
+    line: list[dict] = []
+    node = chain
+    while node:
+        info = node.get("species") or {}
+        name = info.get("name")
+        node_id = species_id_from_url(info.get("url"))
+        if node_id:
+            line.append({"id": node_id, "name": name or str(node_id)})
+        nxt = node.get("evolves_to") or []
+        node = random.choice(nxt) if nxt else None
+    return line or [{"id": base_id, "name": species.get("name") or str(base_id)}]
+
+
+def species_id_from_url(url: str | None) -> int | None:
+    if not url:
+        return None
+    parts = [p for p in urllib.parse.urlparse(url).path.split("/") if p]
+    return int(parts[-1]) if parts and parts[-1].isdigit() else None
+
+
+# ---- Sprites --------------------------------------------------------------
+
+
+def download_sprite(species_id: int) -> str | None:
+    """Baixa o sprite da espécie e devolve o caminho local.
+
+    Tenta o GIF animado Gen-V primeiro (SpriteLoader.swift:36) e cai para o PNG
+    estático, que existe para todas as espécies.
+    """
+    os.makedirs(sprite_dir(), exist_ok=True)
+    candidates = [
+        (f"{SPRITES}/versions/generation-v/black-white/animated/{species_id}.gif", "gif"),
+        (f"{SPRITES}/{species_id}.png", "png"),
+    ]
+
+    for url, ext in candidates:
+        target = os.path.join(sprite_dir(), f"{species_id}.{ext}")
+        if os.path.exists(target) and os.path.getsize(target) > 0:
+            return target
+        try:
+            write_atomic(target, fetch(url, binary=True))
+            return target
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                continue  # sem sprite animado; tenta o PNG
+            log(f"sprite {species_id} ({ext}) falhou: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            log(f"sprite {species_id} ({ext}) falhou: {exc}")
+
+    return None
+
+
+def hydrate_sprites(line: list[dict]) -> list[dict]:
+    for form in line:
+        path = download_sprite(form["id"])
+        if path:
+            form["sprite"] = path
+    return line
+
+
+# ---- Economia de tokens ---------------------------------------------------
+#
+# Portado de PokemonBalance (CompanionModel.swift:104-127 do PokeTokenBar).
+# A propriedade que importa: para uma dada raridade o total até a graduação é o
+# mesmo independente de quantas formas a linha tem. O que muda é o parcelamento,
+# com estágios mais altos custando proporcionalmente mais.
+
+EGG_HATCH_THRESHOLD = 5_000_000
+
+GRADUATION_TOTAL = {
+    "common": 750_000_000,
+    "uncommon": 1_875_000_000,
+    "rare": 3_000_000_000,
+    "legendary": 6_000_000_000,
+}
+
+DIFFICULTY_MIN, DIFFICULTY_MAX, DIFFICULTY_DEFAULT = 0.1, 2.0, 1.0
+
+# As quatro contagens que o contrato do omarchy.agents define em modelUsage.
+TOKEN_KEYS = ("inputTokens", "outputTokens",
+              "cacheCreationInputTokens", "cacheReadInputTokens")
+
+AGENT_IDS = ("claude", "codex", "fireworks")
+
+
+def clamp_difficulty(value) -> float:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return DIFFICULTY_DEFAULT
+    if n != n or n in (float("inf"), float("-inf")):
+        return DIFFICULTY_DEFAULT
+    return min(max(n, DIFFICULTY_MIN), DIFFICULTY_MAX)
+
+
+def graduation_total(rarity: str) -> int:
+    return GRADUATION_TOTAL.get(rarity, GRADUATION_TOTAL["common"])
+
+
+def hatch_threshold(difficulty: float) -> int:
+    return max(1, round(EGG_HATCH_THRESHOLD * clamp_difficulty(difficulty)))
+
+
+def phase_threshold(rarity: str, total_forms: int, stage_index: int,
+                    difficulty: float) -> int:
+    """Custo do estágio stage_index (0-based) numa linha de total_forms formas.
+
+    custo(i) = T * (i+1) / (k*(k+1)/2) — a soma sobre todos os estágios é
+    exatamente T, então a graduação cai no total prometido pela raridade sem
+    depender do tamanho da linha.
+    """
+    k = max(1, int(total_forms))
+    i = min(max(0, int(stage_index)) + 1, k)
+    denom = (k * (k + 1)) / 2
+    base = round(graduation_total(rarity) * i / denom)
+    return max(1, round(base * clamp_difficulty(difficulty)))
+
+
+def record_tokens(record: dict) -> int:
+    usage = (record or {}).get("modelUsage")
+    if not isinstance(usage, dict):
+        return 0
+    total = 0
+    for entry in usage.values():
+        if isinstance(entry, dict):
+            total += sum(entry.get(k, 0) or 0 for k in TOKEN_KEYS)
+    return total
+
+
+# ---- Estado ---------------------------------------------------------------
+
+
+def state_path() -> str:
+    return os.path.join(state_dir(), "state.json")
+
+
+def lock_path() -> str:
+    return os.path.join(state_dir(), "absorb.lock")
+
+
+DEFAULT_STATE = {
+    "schemaVersion": 1,
+    "lifetimeTokens": 0,
+    "lastSeen": {},
+    "stage": 0,
+    "tokensIntoStage": 0,
+    "hatched": False,
+    "graduations": 0,
+}
+
+
+def load_state() -> dict:
+    try:
+        with open(state_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            merged = dict(DEFAULT_STATE)
+            merged.update(data)
+            if not isinstance(merged.get("lastSeen"), dict):
+                merged["lastSeen"] = {}
+            return merged
+    except (OSError, json.JSONDecodeError):
+        pass
+    return dict(DEFAULT_STATE)
+
+
+def load_companion() -> dict | None:
+    try:
+        with open(companion_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict) and isinstance(data.get("evolutionLine"), list):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def load_records() -> dict:
+    out = {}
+    for agent_id in AGENT_IDS:
+        path = os.path.join(state_dir(), "..", "agents", "usage", f"{agent_id}.json")
+        path = os.path.normpath(path)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                out[agent_id] = data
+        except (OSError, json.JSONDecodeError):
+            continue
+    return out
+
+
+def cmd_absorb(argv: list[str]) -> int:
+    """Acumula os tokens novos dos records e avança a progressão.
+
+    Este é o único escritor de state.json. O bar instancia um widget por
+    monitor, e dois widgets acumulando o mesmo delta contariam em dobro — então
+    a mutação vive aqui, atrás de um lock, e o QML só observa o arquivo.
+    """
+    difficulty = clamp_difficulty(argv[0] if argv else DIFFICULTY_DEFAULT)
+    seed = len(argv) > 1 and argv[1] == "seed"
+
+    os.makedirs(state_dir(), exist_ok=True)
+    with open(lock_path(), "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # Outra instância já está absorvendo esta mesma rajada.
+            return 0
+
+        state = load_state()
+        records = load_records()
+        companion = load_companion()
+
+        rarity = (companion or {}).get("rarity", "common")
+        line = (companion or {}).get("evolutionLine") or []
+        total_forms = max(1, len(line))
+
+        seen = state["lastSeen"]
+        gained = 0
+        for agent_id in AGENT_IDS:
+            record = records.get(agent_id)
+            if record is None:
+                continue
+            current = record_tokens(record)
+            previous = seen.get(agent_id)
+            if not isinstance(previous, (int, float)):
+                # Primeira vez que vemos este agente: marcamos a régua. Sem
+                # `seed` o histórico já gasto não conta, para o primeiro Pokémon
+                # não graduar instantaneamente.
+                seen[agent_id] = current
+                if seed:
+                    gained += current
+                continue
+            # Só delta positivo. Um record que encolheu (a janela de 30 dias do
+            # coletor do Codex, uma CLI desinstalada, um record reescrito)
+            # contribui zero, nunca negativo.
+            delta = current - previous
+            if delta > 0:
+                gained += delta
+            if delta != 0:
+                seen[agent_id] = current
+
+        hatch_requested = False
+        if gained > 0:
+            state["lifetimeTokens"] += gained
+
+            if not state["hatched"]:
+                needed = hatch_threshold(difficulty)
+                if state["tokensIntoStage"] + gained < needed:
+                    state["tokensIntoStage"] += gained
+                else:
+                    # Chocou. O excedente do ovo é transferido para o
+                    # crescimento do filhote, como no original.
+                    state["tokensIntoStage"] = state["tokensIntoStage"] + gained - needed
+                    state["hatched"] = True
+                    state["stage"] = 0
+                    if companion is None:
+                        hatch_requested = True
+            else:
+                state["tokensIntoStage"] += gained
+
+            if state["hatched"]:
+                # Avança quantos estágios os tokens cobrirem. Um dia pesado pode
+                # cobrir mais de um, e avançar só um por execução deixaria
+                # tokens presos.
+                stage = state["stage"]
+                into = state["tokensIntoStage"]
+                while stage < total_forms:
+                    threshold = phase_threshold(rarity, total_forms, stage, difficulty)
+                    if into < threshold:
+                        break
+                    into -= threshold
+                    stage += 1
+
+                if stage >= total_forms:
+                    state["graduations"] += 1
+                    state["hatched"] = False
+                    state["stage"] = 0
+                    # O excedente é descartado de propósito: carregá-lo faria
+                    # cascata no caso que importa, em que `seed` solta mais de um
+                    # bilhão de uma vez e graduaria vários Pokémon em sequência
+                    # contra uma linha que ainda nem foi sorteada. Em uso normal
+                    # a perda é de no máximo um delta, e só na graduação.
+                    state["tokensIntoStage"] = 0
+                    hatch_requested = True
+                else:
+                    state["stage"] = stage
+                    state["tokensIntoStage"] = into
+
+        write_json(state_path(), state)
+
+        if hatch_requested:
+            cmd_hatch([])
+
+    log(f"absorveu {gained} tokens; lifetime={state['lifetimeTokens']} "
+        f"stage={state['stage']} hatched={state['hatched']} "
+        f"graduations={state['graduations']}")
+    return 0
+
+
+# ---- Subcomandos ----------------------------------------------------------
+
+
+def companion_path() -> str:
+    return os.path.join(state_dir(), "companion.json")
+
+
+def cmd_hatch(argv: list[str]) -> int:
+    floor = argv[0] if argv else None
+    entries = load_index()
+    entry = pick_species(entries, floor=floor)
+    line = hydrate_sprites(evolution_line(entry["id"]))
+
+    write_json(
+        companion_path(),
+        {
+            "schemaVersion": 1,
+            "baseSpeciesId": entry["id"],
+            "name": entry["name"],
+            "rarity": rarity_for(entry),
+            "captureRate": entry["captureRate"],
+            "evolutionLine": line,
+            "hatchedAt": int(time.time()),
+        },
+    )
+    log(f"chocou {entry['name']} ({rarity_for(entry)}), linha de {len(line)} forma(s)")
+    return 0
+
+
+def cmd_sprites(argv: list[str]) -> int:
+    if not argv:
+        log("uso: poke-sync sprites <id> [id...]")
+        return 2
+    for raw in argv:
+        if not raw.isdigit():
+            continue
+        path = download_sprite(int(raw))
+        log(f"{raw}: {path or 'indisponível'}")
+    return 0
+
+
+def cmd_index(_argv: list[str]) -> int:
+    entries = load_index(rebuild=True)
+    counts: dict[str, int] = {}
+    for entry in entries:
+        rarity = rarity_for(entry)
+        counts[rarity] = counts.get(rarity, 0) + 1
+    log(f"{len(entries)} espécies base: {counts}")
+    return 0
+
+
+COMMANDS = {"hatch": cmd_hatch, "sprites": cmd_sprites,
+            "index": cmd_index, "absorb": cmd_absorb}
+
+
+def main(argv: list[str]) -> int:
+    command = argv[0] if argv else "hatch"
+    handler = COMMANDS.get(command)
+    if not handler:
+        log(f"subcomando desconhecido: {command}")
+        log(f"disponíveis: {', '.join(sorted(COMMANDS))}")
+        return 2
+    try:
+        return handler(argv[1:])
+    except Exception as exc:  # noqa: BLE001 - o QML só olha o exit code
+        log(f"erro: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

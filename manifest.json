@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.heitorm50.poketokenbar",
+  "name": "PokeTokenBar for Omarchy",
+  "version": "0.1.0",
+  "author": "HeitorM50",
+  "license": "MIT",
+  "description": "Um Pokémon no bar que choca e evolui conforme você queima tokens de IA, lendo os records do omarchy.agents",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "PokeTokenBar",
+    "description": "Sprite animado que evolui com o uso de tokens dos seus agentes de IA, com a linha evolutiva e o progresso num popout.",
+    "category": "AI",
+    "aliases": ["poketokenbar", "companion", "pokemon"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "difficulty": 0.3,
+      "spriteSize": 22,
+      "showTokens": true,
+      "showLimitPercent": false,
+      "seedFromExisting": false,
+      "pollSeconds": 60
+    },
+    "schema": [
+      {
+        "key": "difficulty",
+        "type": "real",
+        "label": "Dificuldade",
+        "min": 0.1,
+        "max": 2.0,
+        "step": 0.1,
+        "defaultValue": 0.3,
+        "description": "Multiplica os limiares de evolução. Abaixo de 1 evolui mais rápido. O padrão 0.3 é calibrado para ~50M tokens/dia; use 1.0 para o balanceamento original do PokeTokenBar (~253M/dia)."
+      },
+      {
+        "key": "spriteSize",
+        "type": "integer",
+        "label": "Tamanho do sprite no bar (px)",
+        "min": 14,
+        "max": 40,
+        "step": 1,
+        "defaultValue": 22
+      },
+      {
+        "key": "showTokens",
+        "type": "boolean",
+        "label": "Mostrar tokens de hoje ao lado do sprite",
+        "defaultValue": true
+      },
+      {
+        "key": "showLimitPercent",
+        "type": "boolean",
+        "label": "Mostrar % do limite mais apertado",
+        "defaultValue": false
+      },
+      {
+        "key": "seedFromExisting",
+        "type": "boolean",
+        "label": "Contar o uso já registrado",
+        "defaultValue": false,
+        "description": "Por padrão a contagem começa em zero, para o primeiro Pokémon não graduar instantaneamente. Ligue para que o total histórico já acumulado conte na progressão."
+      },
+      {
+        "key": "pollSeconds",
+        "type": "integer",
+        "label": "Intervalo de reavaliação (segundos)",
+        "min": 15,
+        "max": 900,
+        "step": 15,
+        "defaultValue": 60,
+        "description": "Rede de segurança: os records são observados por FileView e reagem na hora. Este timer só cobre o caso de uma escrita não gerar evento de arquivo."
+      }
+    ]
+  }
+}
