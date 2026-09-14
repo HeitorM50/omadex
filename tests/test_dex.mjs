@@ -1,0 +1,132 @@
+#!/usr/bin/env node
+// Projeção do Pokédex sobre o catch log.
+//
+// O dex não é um arquivo: é derivado das entradas da coleção. Estes testes
+// carregam o Collection.js real (tirando o `.pragma library`, que é sintaxe de
+// QML) para não haver uma segunda cópia da lógica aqui.
+
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
+
+const PLUGIN = join(homedir(), '.config/omarchy/plugins/io.github.heitorm50.poketokenbar')
+
+const dir = mkdtempSync(join(tmpdir(), 'ptb-dex-'))
+const shim = join(dir, 'collection.mjs')
+writeFileSync(shim,
+  readFileSync(join(PLUGIN, 'Collection.js'), 'utf8').replace(/^\.pragma library\s*/m, '')
+  + '\nexport { dexEntries, catchLogRows, dexStats, speciesReached };\n')
+const C = await import(shim)
+
+let fails = 0
+const eq = (label, got, want) => {
+  const g = JSON.stringify(got), w = JSON.stringify(want)
+  const ok = g === w
+  if (!ok) fails++
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}: ${g}${ok ? '' : `  (esperado ${w})`}`)
+}
+
+// Uma entrada de catch log. `line` carrega id e nome de cada forma, porque o
+// dex precisa nomear espécies que o companion alcançou mas que nunca foram a
+// forma base de nada.
+const entry = (o = {}) => ({
+  companionId: o.companionId ?? 'c1',
+  speciesId: o.speciesId ?? 341,
+  name: o.name ?? 'corphish',
+  rarity: o.rarity ?? 'common',
+  shiny: o.shiny ?? false,
+  line: o.line ?? [{ id: 341, name: 'corphish' }, { id: 342, name: 'crawdaunt' }],
+  hatchedAt: o.hatchedAt ?? 1000,
+  graduatedAt: o.graduatedAt ?? null,
+  finalStage: o.finalStage ?? 0,
+})
+const col = (...entries) => ({ schemaVersion: 1, entries })
+
+console.log('--- espécies alcançadas vêm de line[0..finalStage] ---')
+eq('estágio 0 alcança só a base', C.speciesReached(entry({ finalStage: 0 })).map(s => s.id), [341])
+eq('estágio 1 alcança as duas', C.speciesReached(entry({ finalStage: 1 })).map(s => s.id), [341, 342])
+eq('finalStage além da linha não estoura',
+   C.speciesReached(entry({ finalStage: 9 })).map(s => s.id), [341, 342])
+eq('linha vazia devolve nada', C.speciesReached(entry({ line: [] })), [])
+
+console.log('\n--- dex: uma célula por espécie ---')
+eq('coleção vazia', C.dexEntries(col()), [])
+eq('uma entrada no estágio 0 dá uma célula',
+   C.dexEntries(col(entry())).map(d => d.id), [341])
+eq('evoluída dá duas células',
+   C.dexEntries(col(entry({ finalStage: 1 }))).map(d => d.id), [341, 342])
+eq('a célula carrega o nome',
+   C.dexEntries(col(entry({ finalStage: 1 }))).map(d => d.name), ['corphish', 'crawdaunt'])
+
+console.log('\n--- dex: espécie repetida vira uma célula só, com contagem ---')
+const repetida = col(entry({ companionId: 'a', hatchedAt: 1000 }),
+                     entry({ companionId: 'b', hatchedAt: 2000 }))
+eq('uma célula', C.dexEntries(repetida).map(d => d.id), [341])
+eq('contagem de indivíduos', C.dexEntries(repetida)[0].count, 2)
+
+console.log('\n--- dex: shiny é grudento por espécie ---')
+const misto = col(entry({ companionId: 'a', shiny: false }),
+                  entry({ companionId: 'b', shiny: true }))
+eq('a espécie fica marcada shiny', C.dexEntries(misto)[0].shiny, true)
+eq('sem nenhum shiny, não marca', C.dexEntries(col(entry()))[0].shiny, false)
+
+console.log('\n--- dex: shiny só conta para as espécies realmente alcançadas ---')
+// Um shiny que parou no estágio 0 não dá o ✨ na evolução que ele nunca virou.
+const paradoShiny = col(entry({ shiny: true, finalStage: 0 }),
+                        entry({ companionId: 'b', shiny: false, finalStage: 1 }))
+const porId = Object.fromEntries(C.dexEntries(paradoShiny).map(d => [d.id, d]))
+eq('a base é shiny', porId[341].shiny, true)
+eq('a evolução não é', porId[342].shiny, false)
+
+console.log('\n--- dex: ordenado por número ---')
+const fora = col(entry({ companionId: 'a', speciesId: 25, line: [{ id: 25, name: 'pikachu' }] }),
+                 entry({ companionId: 'b', speciesId: 1, line: [{ id: 1, name: 'bulbasaur' }] }))
+eq('ordem crescente', C.dexEntries(fora).map(d => d.id), [1, 25])
+
+console.log('\n--- catch log: mais recente primeiro ---')
+const log3 = col(entry({ companionId: 'a', hatchedAt: 1000 }),
+                 entry({ companionId: 'c', hatchedAt: 3000 }),
+                 entry({ companionId: 'b', hatchedAt: 2000 }))
+eq('ordenado por chocagem desc', C.catchLogRows(log3).map(r => r.companionId), ['c', 'b', 'a'])
+eq('a entrada aberta é marcada',
+   C.catchLogRows(col(entry({ graduatedAt: null })))[0].current, true)
+eq('a fechada não', C.catchLogRows(col(entry({ graduatedAt: 9999 })))[0].current, false)
+
+console.log('\n--- estatísticas do cabeçalho ---')
+const stats = C.dexStats(col(entry({ companionId: 'a', finalStage: 1 }),
+                             entry({ companionId: 'b', shiny: true }),
+                             entry({ companionId: 'c', speciesId: 25, line: [{ id: 25, name: 'pikachu' }] })))
+eq('espécies distintas', stats.species, 3)   // 341, 342, 25
+eq('espécies shiny', stats.shiny, 1)         // só corphish
+eq('indivíduos', stats.individuals, 3)
+
+console.log('\n--- a célula expõe os sprites que tem ---')
+// A mesma espécie pode ter sido possuída normal e shiny; a célula carrega os
+// dois caminhos para a view escolher (e poder alternar no clique).
+const comSprites = col(
+  entry({ companionId: 'a', shiny: false,
+          line: [{ id: 341, name: 'corphish', sprite: '/s/341.gif' }] }),
+  entry({ companionId: 'b', shiny: true,
+          line: [{ id: 341, name: 'corphish', sprite: '/s/341-shiny.gif' }] }))
+eq('sprite normal', C.dexEntries(comSprites)[0].sprite, '/s/341.gif')
+eq('sprite shiny', C.dexEntries(comSprites)[0].shinySprite, '/s/341-shiny.gif')
+eq('sem shiny, shinySprite é vazio',
+   C.dexEntries(col(entry({ line: [{ id: 341, name: 'corphish', sprite: '/s/341.gif' }] })))[0].shinySprite, '')
+
+console.log('\n--- dados malformados não derrubam a projeção ---')
+eq('entries ausente', C.dexEntries({ schemaVersion: 1 }), [])
+eq('coleção nula', C.dexEntries(null), [])
+// `line: undefined` cairia no default do factory (`??`), então o campo tem de
+// ser removido de verdade para exercitar a entrada sem linha.
+const semLinha = entry(); delete semLinha.line
+eq('entrada sem line', C.dexEntries(col(semLinha)), [])
+eq('catch log tolera entrada sem line', C.catchLogRows(col(semLinha))[0].sprite, '')
+eq('forma sem id é ignorada',
+   C.dexEntries(col(entry({ line: [{ name: 'sem id' }, { id: 7, name: 'squirtle' }], finalStage: 1 })))
+    .map(d => d.id), [7])
+eq('catch log de coleção nula', C.catchLogRows(null), [])
+eq('stats de coleção nula', C.dexStats(null), { species: 0, shiny: 0, individuals: 0 })
+
+console.log(fails ? `\n${fails} FALHA(S)` : '\nTodos os testes passaram')
+process.exit(fails ? 1 : 0)

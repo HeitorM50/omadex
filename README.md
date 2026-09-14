@@ -47,6 +47,38 @@ A raridade vem do `capture_rate` da PokéAPI (`≤45` raro, `≤120` incomum, se
 comum; `is_legendary`/`is_mythical` força lendário), e a chocagem é ponderada
 por esse mesmo número — na prática, lendário sai cerca de 1 em 95.
 
+### Pokédex e histórico
+
+O popout tem três abas: **Companion** (o Pokémon de agora), **Pokédex** (uma
+célula por espécie já possuída) e **Histórico** (uma linha por indivíduo
+criado).
+
+O Pokédex **não é um arquivo** — é projetado do histórico por `Collection.js`.
+Duas coleções persistidas dessincronizariam; uma não tem como.
+
+Uma espécie entra no dex assim que o companion a alcança, e fica para sempre.
+O dex registra espécies **alcançadas**, não a linha inteira: um Corphish que
+graduou sem evoluir não dá o Crawdaunt. É a diferença entre colecionar o que
+você criou e o que poderia ter criado.
+
+### Shiny
+
+Uma chocagem em **64** sai shiny. O 1/4096 dos jogos daria uma a cada algumas
+décadas no ritmo de uso real; o próprio PokeTokenBar já afrouxa a taxa.
+
+Um shiny mantém as cores por toda a linha evolutiva, e os sprites vêm das
+subpastas próprias da PokéAPI (`.../animated/shiny/<id>.gif`, com fallback para
+`.../shiny/<id>.png` e, se nem isso existir, para a arte normal — melhor um
+Pokémon com a cor errada que um sem arte).
+
+O ✨ aparece no nome do companion, na linha do histórico e na célula do dex.
+Na célula ele marca a **espécie**: quer dizer "já tive esta shiny alguma vez", e
+fica mesmo quando a célula está mostrando a arte normal. Uma espécie possuída
+nas duas versões pode alternar a arte no clique.
+
+O bar fica de fora de propósito: em 22px o sprite shiny já é a diferença
+visível, e mais um glifo só apertaria os vizinhos.
+
 ### O contador é monotônico
 
 Os records **não** servem como total histórico: o coletor do Codex só lê sessões
@@ -65,10 +97,14 @@ só marca a régua, para o primeiro Pokémon não graduar instantaneamente. Ligu
 ## Arquitetura
 
 ```
-BarWidget.qml   observa e orquestra; não escreve nada
-Panel.qml       apresentação pura, com o estado injetado pelo widget
-Balance.js      matemática de leitura (limiares, progresso, formatação)
-bin/poke-sync   o único escritor: PokéAPI, sprites e a progressão
+BarWidget.qml     observa e orquestra; não escreve nada
+Panel.qml         casca do popout: abas, teclado, ciclo de vida
+CompanionView.qml \
+DexView.qml        > uma aba cada, apresentação pura
+CatchLogView.qml  /
+Balance.js        matemática de leitura (limiares, progresso, formatação)
+Collection.js     projeção do Pokédex sobre o histórico
+bin/poke-sync     o único escritor: PokéAPI, sprites e a progressão
 ```
 
 A mutação do estado vive no helper, não no QML, porque **o bar instancia um
@@ -83,6 +119,7 @@ de espelhada entre o QML e um teste.
 |---|---|
 | `~/.local/state/omarchy/<id>/state.json` | `poke-sync absorb` |
 | `~/.local/state/omarchy/<id>/companion.json` | `poke-sync hatch` |
+| `~/.local/state/omarchy/<id>/collection.json` | `poke-sync hatch` e `absorb` |
 | `~/.cache/omarchy/<id>/sprites/` | `poke-sync` |
 | `~/.cache/omarchy/<id>/base-species.json` | `poke-sync index` |
 
@@ -103,20 +140,34 @@ GraphQL da PokéAPI (0,7s) com fallback REST (~60s) se ele estiver fora.
 ### Testes
 
 ```bash
-tests/test_absorb.py
+tests/test_collection.py   # coleção e sorteio de shiny (funções puras)
+tests/test_absorb.py       # absorção e integração, contra os records reais
+tests/test_dex.mjs         # projeção do Pokédex
 ```
 
-Exercita `poke-sync absorb` num `XDG_STATE_HOME` temporário, com cópias dos seus
-records reais. O caso que importa é o do record que **encolhe**: `lifetimeTokens`
-não pode cair e o estágio não pode regredir. Também cobre o record que zera, a
-progressão completa até a graduação e o `flock`.
+107 asserções. As que mais importam:
+
+- **O record que encolhe** (`test_absorb.py`): `lifetimeTokens` não pode cair e
+  o estágio não pode regredir quando sessões saem da janela de 30 dias do
+  coletor do Codex.
+- **Duas chocagens seguidas** não deixam duas entradas abertas no histórico. Foi
+  este teste que revelou que `hatchedAt` — resolução de um segundo — não servia
+  como identidade de entrada.
+- **O ✨ só marca espécies alcançadas** (`test_dex.mjs`): um shiny que parou na
+  forma base não dá o brilho na evolução que ele nunca virou.
+
+Nenhum dos três toca a rede nem o seu estado real.
 
 ## Interações
 
 - **Ícone no bar:** esquerda abre o painel, meio reavalia o uso.
-- **Painel:** `r` reavalia, `a` abre o painel detalhado do `omarchy.agents`,
-  Tab vai para o painel vizinho, Esc fecha.
-- **IPC:** `omarchy-shell io.github.heitorm50.poketokenbar <open|close|toggle|refresh|hatch>`
+- **Painel:** `←`/`→` (ou `h`/`l`) trocam de aba, `1`/`2`/`3` vão direto a uma,
+  `r` reavalia, `a` abre o painel detalhado do `omarchy.agents`, Tab vai para o
+  painel vizinho, Esc fecha.
+- **Pokédex:** o hover mostra o detalhe embaixo da grade; clicar numa espécie
+  que você teve nas duas versões alterna entre a arte normal e a shiny.
+- **IPC:** `omarchy-shell io.github.heitorm50.poketokenbar <open|close|toggle|refresh|hatch|companion|dex|log>`
+  — `dex` e `log` abrem direto na aba, o que serve para um atalho de teclado.
 
 ## Settings
 

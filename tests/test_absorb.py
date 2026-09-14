@@ -148,5 +148,113 @@ with Sandbox() as sb:
     ps.cmd_absorb(['0.3'])
     eq("absorve depois do lock liberado", sb.read_state()['lifetimeTokens'], 5_000_000)
 
+
+
+# =========================================================================
+# Coleção e shiny — integração com cmd_hatch e cmd_absorb.
+#
+# A rede é cortada trocando pick_species / evolution_line / hydrate_sprites por
+# fakes: o que está sob teste aqui é o acoplamento entre chocar, progredir e o
+# catch log, não a PokéAPI.
+# =========================================================================
+
+def stub_network(ps, species_id=341, name='corphish', rate=205, line=None):
+    line = line or [(341, 'corphish'), (342, 'crawdaunt')]
+    ps.load_index = lambda **kw: [{'id': species_id, 'name': name,
+                                   'captureRate': rate,
+                                   'isLegendary': False, 'isMythical': False}]
+    ps.pick_species = lambda entries, floor=None: entries[0]
+    ps.evolution_line = lambda base_id: [{'id': i, 'name': n} for i, n in line]
+    ps.hydrate_sprites = lambda forms, shiny=False: [
+        dict(f, sprite=f"/fake/{f['id']}{'-shiny' if shiny else ''}.gif") for f in forms]
+    return ps
+
+
+def read_collection(sb):
+    with open(os.path.join(sb.state, 'collection.json'), encoding='utf-8') as h:
+        return json.load(h)
+
+
+def read_companion(sb):
+    with open(os.path.join(sb.state, 'companion.json'), encoding='utf-8') as h:
+        return json.load(h)
+
+
+print("\n--- 7. cmd_hatch grava shiny no companion e abre a entrada ---")
+with Sandbox() as sb:
+    ps = stub_network(load_helper())
+    ps.roll_shiny = lambda rng=None: True
+    ps.cmd_hatch([])
+    comp = read_companion(sb)
+    eq("companion marcado shiny", comp['shiny'], True)
+    eq("sprites shiny na linha", comp['evolutionLine'][0]['sprite'].endswith('-shiny.gif'), True)
+    col = read_collection(sb)
+    eq("uma entrada na coleção", len(col['entries']), 1)
+    eq("entrada shiny", col['entries'][0]['shiny'], True)
+    eq("entrada aberta", col['entries'][0]['graduatedAt'], None)
+
+print("\n--- 8. chocagem normal não marca shiny ---")
+with Sandbox() as sb:
+    ps = stub_network(load_helper())
+    ps.roll_shiny = lambda rng=None: False
+    ps.cmd_hatch([])
+    eq("companion normal", read_companion(sb)['shiny'], False)
+    eq("entrada normal", read_collection(sb)['entries'][0]['shiny'], False)
+    eq("sprite normal", read_companion(sb)['evolutionLine'][0]['sprite'].endswith('/341.gif'), True)
+
+print("\n--- 9. hatch rodado duas vezes não deixa duas entradas abertas ---")
+with Sandbox() as sb:
+    ps = stub_network(load_helper())
+    ps.roll_shiny = lambda rng=None: False
+    ps.cmd_hatch([])
+    ps.cmd_hatch([])
+    col = read_collection(sb)
+    abertas = [e for e in col['entries'] if e['graduatedAt'] is None]
+    eq("exatamente uma aberta", len(abertas), 1)
+    eq("a anterior ficou no log, fechada", len(col['entries']), 2)
+
+print("\n--- 10. avanço de estágio é registrado na entrada aberta ---")
+with Sandbox() as sb:
+    ps = stub_network(load_helper())
+    ps.roll_shiny = lambda rng=None: False
+    ps.cmd_hatch([])
+    ps.cmd_absorb(['0.3'])                       # marca a régua
+    sb.put_state(lastSeen=sb.read_state()['lastSeen'],
+                 hatched=True, stage=0, tokensIntoStage=0)
+    sb.put_record('claude', bump(sb.record('claude'), 80_000_000))
+    ps.cmd_absorb(['0.3'])                       # 80M > 75M do estágio 0
+    eq("estado no estágio 1", sb.read_state()['stage'], 1)
+    eq("entrada registra o estágio 1", read_collection(sb)['entries'][0]['finalStage'], 1)
+
+print("\n--- 11. graduação fecha a entrada e abre a do ovo novo ---")
+with Sandbox() as sb:
+    ps = stub_network(load_helper())
+    ps.roll_shiny = lambda rng=None: False
+    ps.cmd_hatch([])
+    ps.cmd_absorb(['0.3'])
+    sb.put_state(lastSeen=sb.read_state()['lastSeen'],
+                 hatched=True, stage=0, tokensIntoStage=0)
+    # linha de 2 formas, comum, dif 0.3 -> 75M + 150M = 225M até graduar
+    sb.put_record('claude', bump(sb.record('claude'), 230_000_000))
+    ps.cmd_absorb(['0.3'])
+    eq("graduou", sb.read_state()['graduations'], 1)
+    col = read_collection(sb)
+    fechadas = [e for e in col['entries'] if e['graduatedAt'] is not None]
+    abertas = [e for e in col['entries'] if e['graduatedAt'] is None]
+    eq("uma fechada", len(fechadas), 1)
+    eq("fechada no último estágio", fechadas[0]['finalStage'], 1)
+    eq("uma aberta (o ovo novo)", len(abertas), 1)
+
+print("\n--- 12. coleção é semeada a partir de um companion pré-existente ---")
+with Sandbox() as sb:
+    ps = stub_network(load_helper())
+    sb.put_companion('common', ['corphish', 'crawdaunt'])   # sem collection.json
+    eq("não havia coleção", os.path.exists(os.path.join(sb.state, 'collection.json')), False)
+    ps.cmd_absorb(['0.3'])
+    col = read_collection(sb)
+    eq("o companion em andamento virou entrada", len(col['entries']), 1)
+    eq("aberta", col['entries'][0]['graduatedAt'], None)
+    eq("shiny ausente lê False", col['entries'][0]['shiny'], False)
+
 print(f"\n{fails} FALHA(S)" if fails else "\nTodos os testes passaram")
 raise SystemExit(1 if fails else 0)

@@ -60,7 +60,28 @@ Qualquer mudança em `cmd_absorb` precisa preservar isso, e
 `tests/test_absorb.py` tem o caso do record que encolhe justamente para travar
 essa regra. Rode-o antes e depois de mexer ali.
 
-### 4. Os records do `omarchy.agents` são somente-leitura
+### 4. O Pokédex é projeção, não arquivo
+
+`collection.json` guarda **indivíduos** (o catch log). O dex de espécies sai
+dele em `Collection.js`, na hora de desenhar. Nunca persista um segundo arquivo
+com as espécies: duas coleções dessincronizam, uma não tem como.
+
+A regra que dá sentido ao dex é `speciesReached`: as espécies de uma entrada são
+`line[0..finalStage]`, não a linha inteira. Um Pokémon que graduou sem evoluir
+não te dá as evoluções. Se você "consertar" isso, o dex passa a colecionar o que
+a pessoa poderia ter criado em vez do que criou.
+
+### 5. Entradas do histórico têm id próprio, não timestamp
+
+`companionId` existe porque `hatchedAt` tem resolução de um segundo: duas
+chocagens no mesmo segundo — um duplo disparo do widget — colidiriam, e a
+entrada passaria a descrever a espécie errada. Um teste cobre isso
+(`test_absorb.py`, caso 9); foi ele que revelou o problema.
+
+`companion_key()` cai para `hatchedAt` quando não há id, para companions
+gravados antes deste campo existir.
+
+### 6. Os records do `omarchy.agents` são somente-leitura
 
 `~/.local/state/omarchy/agents/usage/*.json` são dados de outro plugin. Este
 aqui lê e nunca escreve, e **nunca** roda `omarchy-agent-usage-update` — quem
@@ -84,10 +105,20 @@ de um campo novo, leia de lá; não invente.
 ## Verificação
 
 ```bash
-tests/test_absorb.py          # regra de acumulação, contra cópias dos records reais
+tests/test_collection.py      # coleção e sorteio de shiny (puras, rápidas)
+tests/test_absorb.py          # acumulação e integração, contra os records reais
+tests/test_dex.mjs            # projeção do Pokédex
 bin/poke-sync index           # reconstrói o índice (deve dar 329 espécies base)
 bin/poke-sync hatch           # sorteia e baixa sprites
 omarchy restart shell         # única forma confiável de testar QML novo
+```
+
+Para forçar um shiny sem esperar 64 chocagens, troque `roll_shiny` no módulo —
+é o que os testes fazem:
+
+```python
+ps.roll_shiny = lambda rng=None: True
+ps.cmd_hatch([])
 ```
 
 Para ver uma evolução sem esperar dias: edite `tokensIntoStage` em
@@ -103,4 +134,10 @@ formas, são 75M e 150M.
   o descarte do excedente na graduação, o `smooth: false` nos sprites.
 - Sprites são pixel art: `smooth: false` sempre, e largura derivada da
   proporção (os Gen-V não são quadrados: 36x66, 59x68…).
+- GIF animado só onde há foco: o estágio atual no companion, o hover na grade do
+  dex e nas linhas do histórico. Uma grade inteira animada é epilética e cara.
+- Nada de `ToolTip` do Qt Quick Controls — ele vem com o estilo padrão de fundo
+  claro e destoa do shell. Use `PanelToolTip`. E num popout estreito prefira uma
+  linha de detalhe fixa: um tooltip mais largo que o elemento é recortado pela
+  borda (foi o que aconteceu na grade do dex).
 - Sem co-autoria de ferramenta em commits, PRs ou arquivos versionados.

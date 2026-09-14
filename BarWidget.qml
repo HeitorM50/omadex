@@ -57,6 +57,11 @@ BarWidget {
   readonly property var evolutionLine: companion && Array.isArray(companion.evolutionLine)
                                        ? companion.evolutionLine : []
   readonly property string rarity: companion && companion.rarity ? companion.rarity : "common"
+  readonly property bool shiny: companion ? companion.shiny === true : false
+
+  // Catch log completo. O Pokédex de espécies é projeção disto (Collection.js),
+  // calculada na hora de desenhar — por isso não há arquivo de dex.
+  property var collection: null
   readonly property int totalForms: Math.max(1, evolutionLine.length)
 
   readonly property bool hatched: progressState ? progressState.hatched === true : false
@@ -131,6 +136,11 @@ BarWidget {
     parseInto(raw, function (p) { root.progressState = p })
   }
 
+  function applyCollection(raw) {
+    parseInto(raw, function (p) { root.collection = p },
+              function (p) { return Array.isArray(p.entries) })
+  }
+
   function applyCompanion(raw) {
     parseInto(raw, function (p) { root.companion = p },
               function (p) { return Array.isArray(p.evolutionLine) })
@@ -164,6 +174,7 @@ BarWidget {
     }
     stateFile.reload()
     companionFile.reload()
+    collectionFile.reload()
     absorb()
   }
 
@@ -174,6 +185,7 @@ BarWidget {
   onSettingsChanged: injectPanel()
   onCompanionChanged: injectPanel()
   onProgressStateChanged: injectPanel()
+  onCollectionChanged: injectPanel()
   onRecordsChanged: injectPanel()
 
   // ---- Ciclo de vida do painel. Bar.findPanelWidget exige open/close/opened na
@@ -184,6 +196,13 @@ BarWidget {
   function open() { if (panelLoader.item) panelLoader.item.open() }
   function close() { if (panelLoader.item) panelLoader.item.close() }
   function togglePanel() { if (panelLoader.item) panelLoader.item.toggle() }
+
+  // Abre o painel já numa aba. Serve para um atalho ir direto ao Pokédex, e é
+  // o que permite dirigir as abas de fora nos testes.
+  function openTab(index) {
+    if (!panelLoader.item) return
+    panelLoader.item.openAt(index)
+  }
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
 
   function injectPanel() {
@@ -215,6 +234,15 @@ BarWidget {
     watchChanges: true
     printErrors: false
     onLoaded: root.applyCompanion(text())
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: collectionFile
+    path: root.stateDir + "/collection.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.applyCollection(text())
     onFileChanged: reload()
   }
 
@@ -319,6 +347,9 @@ BarWidget {
     function toggle(): void { root.togglePanel() }
     function refresh(): void { root.broadcast("refresh") }
     function hatch(): void { root.requestHatch() }
+    function companion(): void { root.openTab(0) }
+    function dex(): void { root.openTab(1) }
+    function log(): void { root.openTab(2) }
   }
 
   WidgetButton {

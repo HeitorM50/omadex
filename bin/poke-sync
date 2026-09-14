@@ -27,6 +27,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 MODULE = "io.github.heitorm50.poketokenbar"
 
@@ -290,20 +291,31 @@ def species_id_from_url(url: str | None) -> int | None:
 # ---- Sprites --------------------------------------------------------------
 
 
-def download_sprite(species_id: int) -> str | None:
-    """Baixa o sprite da espécie e devolve o caminho local.
+def sprite_urls(species_id: int, shiny: bool = False) -> list[tuple[str, str]]:
+    """As URLs a tentar, em ordem: GIF animado Gen-V e depois o PNG estático.
 
-    Tenta o GIF animado Gen-V primeiro (SpriteLoader.swift:36) e cai para o PNG
-    estático, que existe para todas as espécies.
+    O animado não existe para todas as espécies; o PNG existe. As variantes
+    shiny vivem em subpastas próprias (SpriteLoader.swift:36-39).
     """
-    os.makedirs(sprite_dir(), exist_ok=True)
-    candidates = [
-        (f"{SPRITES}/versions/generation-v/black-white/animated/{species_id}.gif", "gif"),
-        (f"{SPRITES}/{species_id}.png", "png"),
-    ]
+    animated = f"{SPRITES}/versions/generation-v/black-white/animated"
+    if shiny:
+        return [(f"{animated}/shiny/{species_id}.gif", "gif"),
+                (f"{SPRITES}/shiny/{species_id}.png", "png")]
+    return [(f"{animated}/{species_id}.gif", "gif"),
+            (f"{SPRITES}/{species_id}.png", "png")]
 
-    for url, ext in candidates:
-        target = os.path.join(sprite_dir(), f"{species_id}.{ext}")
+
+def sprite_cache_name(species_id: int, ext: str, shiny: bool = False) -> str:
+    """Nome no cache. Shiny e normal são arquivos distintos da mesma espécie."""
+    return f"{species_id}-shiny.{ext}" if shiny else f"{species_id}.{ext}"
+
+
+def download_sprite(species_id: int, shiny: bool = False) -> str | None:
+    """Baixa o sprite da espécie e devolve o caminho local."""
+    os.makedirs(sprite_dir(), exist_ok=True)
+
+    for url, ext in sprite_urls(species_id, shiny):
+        target = os.path.join(sprite_dir(), sprite_cache_name(species_id, ext, shiny))
         if os.path.exists(target) and os.path.getsize(target) > 0:
             return target
         try:
@@ -319,9 +331,17 @@ def download_sprite(species_id: int) -> str | None:
     return None
 
 
-def hydrate_sprites(line: list[dict]) -> list[dict]:
+def hydrate_sprites(line: list[dict], shiny: bool = False) -> list[dict]:
+    """Baixa o sprite de cada forma da linha.
+
+    Um companion shiny mantém as cores shiny em toda a linha evolutiva, como no
+    original — então a variante é a mesma para todas as formas. Se a variante
+    shiny faltar, cai para a normal em vez de deixar a forma sem sprite.
+    """
     for form in line:
-        path = download_sprite(form["id"])
+        path = download_sprite(form["id"], shiny)
+        if path is None and shiny:
+            path = download_sprite(form["id"], False)
         if path:
             form["sprite"] = path
     return line
@@ -477,6 +497,7 @@ def cmd_absorb(argv: list[str]) -> int:
             # Outra instância já está absorvendo esta mesma rajada.
             return 0
 
+        now = int(time.time())
         state = load_state()
         records = load_records()
         companion = load_companion()
@@ -511,6 +532,7 @@ def cmd_absorb(argv: list[str]) -> int:
                 seen[agent_id] = current
 
         hatch_requested = False
+        graduated = False
         if gained > 0:
             state["lifetimeTokens"] += gained
 
@@ -543,6 +565,7 @@ def cmd_absorb(argv: list[str]) -> int:
                     stage += 1
 
                 if stage >= total_forms:
+                    graduated = True
                     state["graduations"] += 1
                     state["hatched"] = False
                     state["stage"] = 0
@@ -559,13 +582,179 @@ def cmd_absorb(argv: list[str]) -> int:
 
         write_json(state_path(), state)
 
+        # A coleção espelha a progressão. Fica dentro do lock, junto da escrita
+        # do estado, para as duas não divergirem se dois absorvedores correrem.
+        collection = load_collection()
+        touched = False
+
+        if companion:
+            # Semeia a entrada de um companion que já existia antes de haver
+            # coleção — sem isso, o Pokémon em andamento sumiria do catch log.
+            touched |= sync_open_entry(collection, companion, now)
+
+        if graduated:
+            touched |= close_open_entry(collection, now, total_forms - 1)
+        elif state["hatched"]:
+            touched |= record_stage(collection, state["stage"])
+
+        if touched:
+            save_collection(collection)
+
         if hatch_requested:
+            # cmd_hatch escreve o companion novo e abre a entrada dele, já com a
+            # anterior fechada acima.
             cmd_hatch([])
 
     log(f"absorveu {gained} tokens; lifetime={state['lifetimeTokens']} "
         f"stage={state['stage']} hatched={state['hatched']} "
         f"graduations={state['graduations']}")
     return 0
+
+
+# ---- Shiny ----------------------------------------------------------------
+
+# Uma chocagem em 64. O 1/4096 dos jogos daria uma shiny a cada algumas décadas
+# no ritmo de uso real desta máquina; o próprio PokeTokenBar já afrouxa a taxa.
+SHINY_RATE = 64
+
+
+def roll_shiny(rng=None) -> bool:
+    """Sorteia se a chocagem é shiny.
+
+    Recebe o gerador para os testes poderem fixar o resultado; sem ele usa o
+    módulo `random`, que já é semeado pelo interpretador.
+    """
+    source = rng if rng is not None else random
+    return source.randrange(SHINY_RATE) == 0
+
+
+# ---- Coleção (catch log) --------------------------------------------------
+#
+# Uma entrada por indivíduo chocado. O Pokédex de espécies é *projeção* disto,
+# calculada na hora de desenhar (Collection.js) — duas coleções persistidas
+# dessincronizariam, uma não tem como.
+#
+# A entrada aberta (graduatedAt None) é sempre o companion atual, e há no
+# máximo uma.
+
+COLLECTION_SCHEMA = 1
+
+
+def collection_path() -> str:
+    return os.path.join(state_dir(), "collection.json")
+
+
+def empty_collection() -> dict:
+    return {"schemaVersion": COLLECTION_SCHEMA, "entries": []}
+
+
+def load_collection() -> dict:
+    try:
+        with open(collection_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict) and isinstance(data.get("entries"), list):
+            return {"schemaVersion": data.get("schemaVersion", COLLECTION_SCHEMA),
+                    "entries": data["entries"]}
+    except (OSError, json.JSONDecodeError):
+        pass
+    # Arquivo ausente, ilegível ou com o formato errado: a coleção volta vazia
+    # em vez de derrubar o helper. Perder o histórico é ruim; travar a
+    # progressão por causa dele é pior.
+    return empty_collection()
+
+
+def save_collection(collection: dict) -> None:
+    write_json(collection_path(), collection)
+
+
+def companion_key(companion: dict):
+    """Identidade do companion, para casar com a entrada de catch log.
+
+    `hatchedAt` tem resolução de um segundo: duas chocagens no mesmo segundo —
+    um duplo disparo do widget, por exemplo — colidiriam, e a entrada passaria a
+    descrever a espécie errada. Por isso cada companion carrega um id próprio.
+    `hatchedAt` fica como fallback para companions da v1, que não tinham id.
+    """
+    return companion.get("companionId") or companion.get("hatchedAt")
+
+
+def open_entry(collection: dict) -> dict | None:
+    for entry in collection["entries"]:
+        if entry.get("graduatedAt") is None:
+            return entry
+    return None
+
+
+def entry_from_companion(companion: dict, now: int) -> dict:
+    """A entrada de catch log correspondente a um companion recém-chocado."""
+    line = companion.get("evolutionLine") or []
+    return {
+        "companionId": companion_key(companion),
+        "speciesId": companion.get("baseSpeciesId"),
+        "name": companion.get("name") or "",
+        "rarity": companion.get("rarity") or "common",
+        # companion.json da v1 não tinha o campo; ausente é normal, não shiny.
+        "shiny": companion.get("shiny") is True,
+        # A forma inteira, não só o id: o Pokédex precisa nomear e desenhar
+        # espécies que nunca foram forma base de nada — um Crawdaunt não existe
+        # no índice de chocagem — e não haveria de onde buscar isso depois.
+        "line": [{"id": f.get("id"),
+                  "name": f.get("name") or str(f.get("id")),
+                  "sprite": f.get("sprite") or ""}
+                 for f in line if f.get("id")],
+        "hatchedAt": companion.get("hatchedAt") or now,
+        "graduatedAt": None,
+        "finalStage": 0,
+    }
+
+
+def sync_open_entry(collection: dict, companion: dict, now: int) -> bool:
+    """Garante que a entrada aberta espelha o companion atual.
+
+    Devolve True se mudou alguma coisa. É idempotente: chamar de novo com o
+    mesmo companion não faz nada, o que importa porque o widget pode disparar o
+    helper várias vezes na mesma rajada.
+    """
+    if not companion:
+        return False
+
+    key = companion_key(companion)
+    changed = False
+
+    # Um companion trocado sem graduar (re-hatch manual, ovo comprado) abandona
+    # o anterior. Ele fica no catch log, fechado no estágio a que chegou.
+    for entry in collection["entries"]:
+        if entry.get("graduatedAt") is None and entry.get("companionId") != key:
+            entry["graduatedAt"] = now
+            changed = True
+
+    if open_entry(collection) is None:
+        collection["entries"].append(entry_from_companion(companion, now))
+        changed = True
+
+    return changed
+
+
+def record_stage(collection: dict, stage: int) -> bool:
+    """Marca até onde o companion atual chegou. Nunca regride."""
+    entry = open_entry(collection)
+    if entry is None:
+        return False
+    reached = max(int(entry.get("finalStage") or 0), int(stage))
+    if reached == entry.get("finalStage"):
+        return False
+    entry["finalStage"] = reached
+    return True
+
+
+def close_open_entry(collection: dict, now: int, final_stage: int) -> bool:
+    """Fecha a entrada aberta na graduação. No-op se não houver nenhuma."""
+    entry = open_entry(collection)
+    if entry is None:
+        return False
+    entry["graduatedAt"] = now
+    entry["finalStage"] = max(int(entry.get("finalStage") or 0), int(final_stage))
+    return True
 
 
 # ---- Subcomandos ----------------------------------------------------------
@@ -579,21 +768,31 @@ def cmd_hatch(argv: list[str]) -> int:
     floor = argv[0] if argv else None
     entries = load_index()
     entry = pick_species(entries, floor=floor)
-    line = hydrate_sprites(evolution_line(entry["id"]))
+    shiny = roll_shiny()
+    line = hydrate_sprites(evolution_line(entry["id"]), shiny)
+    now = int(time.time())
 
-    write_json(
-        companion_path(),
-        {
-            "schemaVersion": 1,
-            "baseSpeciesId": entry["id"],
-            "name": entry["name"],
-            "rarity": rarity_for(entry),
-            "captureRate": entry["captureRate"],
-            "evolutionLine": line,
-            "hatchedAt": int(time.time()),
-        },
-    )
-    log(f"chocou {entry['name']} ({rarity_for(entry)}), linha de {len(line)} forma(s)")
+    companion = {
+        "schemaVersion": 1,
+        "companionId": uuid.uuid4().hex[:12],
+        "baseSpeciesId": entry["id"],
+        "name": entry["name"],
+        "rarity": rarity_for(entry),
+        "shiny": shiny,
+        "captureRate": entry["captureRate"],
+        "evolutionLine": line,
+        "hatchedAt": now,
+    }
+    write_json(companion_path(), companion)
+
+    # A entrada de catch log nasce junto com o companion: o Pokémon entra no
+    # Pokédex assim que choca, não só quando gradua.
+    collection = load_collection()
+    if sync_open_entry(collection, companion, now):
+        save_collection(collection)
+
+    log(f"chocou {entry['name']} ({rarity_for(entry)})"
+        f"{' SHINY' if shiny else ''}, linha de {len(line)} forma(s)")
     return 0
 
 

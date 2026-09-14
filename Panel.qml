@@ -1,20 +1,19 @@
 import QtQuick
-import QtQuick.Controls
 import Quickshell
 import qs.Commons
 import qs.Ui
-import "Balance.js" as Balance
 
-// Popout do companion.
+// Popout do companion: casca com as abas, o teclado e o ciclo de vida.
 //
-// Apresentação apenas. Todo o estado vem injetado por BarWidget.qml, que é o
-// dono dos records e do state.json — este arquivo nunca toca disco nem rede, e
-// por isso pode ser exercitado ponta a ponta com um state.json escrito à mão.
+// O conteúdo de cada aba vive num arquivo próprio (CompanionView, DexView,
+// CatchLogView) — com as três views inline este arquivo passaria de 900 linhas,
+// que é bem além do que se lê de uma vez.
+//
+// Nada aqui toca disco ou rede: o estado todo vem injetado pelo BarWidget, o que
+// permite exercitar o painel com um collection.json escrito à mão.
 //
 // Deliberadamente NÃO duplica os painéis do omarchy.agents: limites por janela,
-// tokens por dia e quebra por modelo já estão a um clique de distância no bar,
-// e repetir isso aqui só criaria duas telas para manter em sincronia. O que
-// aparece aqui é o que o omarchy.agents não tem: o companion.
+// tokens por dia e quebra por modelo já estão a um clique no bar.
 Panel {
   id: root
   moduleName: "io.github.heitorm50.poketokenbar"
@@ -34,51 +33,23 @@ Panel {
   readonly property color contentForeground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  readonly property bool hatched: host ? host.hatched === true : false
-  readonly property var line: host && host.evolutionLine ? host.evolutionLine : []
-  readonly property int stage: host ? host.stage : 0
-  readonly property string rarity: host ? host.rarity : "common"
-  readonly property var progress: host ? host.progress : null
-  readonly property real lifetimeTokens: host ? host.lifetimeTokens : 0
-  readonly property int graduations: host ? host.graduations : 0
-  readonly property string displayName: host ? host.displayName : "—"
-  readonly property real hatchThreshold: host ? host.hatchThreshold : 0
-  readonly property real tokensIntoStage: host ? host.tokensIntoStage : 0
-  readonly property string currentSprite: host && host.currentSprite ? host.currentSprite : ""
+  readonly property var collection: host ? host.collection : null
 
-  // Antes de chocar a barra mostra o progresso do ovo; depois, o do estágio.
-  readonly property real barFraction: {
-    if (hatched) return progress ? progress.fraction : 0
-    return hatchThreshold > 0 ? Math.min(1, tokensIntoStage / hatchThreshold) : 0
-  }
-  readonly property real barRemaining: {
-    if (hatched) return progress ? progress.remaining : 0
-    return Math.max(0, hatchThreshold - tokensIntoStage)
-  }
-  readonly property string nextLabel: {
-    if (!hatched) return "até chocar"
-    if (!progress) return ""
-    return progress.isFinalStage ? "até graduar" : "até evoluir"
+  readonly property var tabs: [
+    { key: "companion", label: "Companion" },
+    { key: "dex", label: "Pokédex" },
+    { key: "log", label: "Histórico" }
+  ]
+  property int tab: 0
+
+  function setTab(index) {
+    tab = Math.max(0, Math.min(tabs.length - 1, index))
   }
 
-  // Uma linha por agente com uso registrado, só com o limite mais apertado.
-  readonly property var agentRows: {
-    var rows = []
-    if (!host || !host.records) return rows
-    var ids = host.agentIds || []
-    for (var i = 0; i < ids.length; i++) {
-      var record = host.records[ids[i]]
-      if (!record) continue
-      var limit = Balance.tightestLimit(record)
-      rows.push({
-        id: ids[i],
-        name: record.name || ids[i],
-        today: record.todayTotalTokens || 0,
-        limitLabel: limit ? limit.label : "",
-        percent: limit ? limit.percent : -1
-      })
-    }
-    return rows
+  function cycleTab(delta) {
+    // Circular: de Histórico com → volta para Companion, o que é menos
+    // frustrante que a aba simplesmente não mudar.
+    tab = (tab + delta + tabs.length) % tabs.length
   }
 
   function refresh() {
@@ -91,6 +62,25 @@ Panel {
     close()
   }
 
+  // Abre já numa aba (IPC: `omarchy-shell ... dex`). Precisa passar pelo
+  // pendingTab porque a abertura reseta a aba, e um `setTab` antes do `open`
+  // seria justamente o que o reset apagaria.
+  property int pendingTab: -1
+
+  function openAt(index) {
+    if (opened) { setTab(index); return }
+    pendingTab = index
+    open()
+  }
+
+  // Reabrir sempre no companion: é o que a pessoa quer ver em 9 de 10 aberturas,
+  // e voltar na aba de ontem seria surpresa sem ganho.
+  onOpenedChanged: {
+    if (!opened) return
+    setTab(pendingTab >= 0 ? pendingTab : 0)
+    pendingTab = -1
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -100,8 +90,8 @@ Panel {
     focusTarget: keyCatcher
     popoutSwitching: root.popoutSwitching
     popoutSwitchClosing: root.popoutSwitchClosing
-    contentWidth: panel.fittedContentWidth(Style.space(330))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
+    contentWidth: panel.fittedContentWidth(Style.space(340))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(540))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -110,309 +100,128 @@ Panel {
       onCloseRequested: root.close()
       onReturnRequested: root.refresh()
       onActivateRequested: root.refresh()
+      // Tab continua sendo do bar (trocar de popout); as abas daqui andam com
+      // as setas horizontais e h/l, que o PanelKeyCatcher entrega em dx.
       onTabRequested: function (direction) { root.switchPanel(direction) }
+      onMoveRequested: function (dx, dy) { if (dx !== 0) root.cycleTab(dx > 0 ? 1 : -1) }
       onTextKey: function (t) {
         if (t === "r" || t === "R") root.refresh()
         else if (t === "a" || t === "A") root.openAgents()
+        else if (t >= "1" && t <= "3") root.setTab(parseInt(t, 10) - 1)
       }
 
       Column {
         id: column
         anchors.fill: parent
-        spacing: Style.space(12)
+        spacing: Style.space(10)
 
-        // ---------- Herói: o sprite grande, o nome e a raridade ----------
-        Item {
+        // ---------- Abas ----------
+        Row {
           width: parent.width
-          implicitHeight: Math.max(Style.space(64), heroLabels.implicitHeight)
-
-          Item {
-            id: heroArt
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(64)
-            height: Style.space(64)
-
-            AnimatedImage {
-              id: heroSprite
-              anchors.centerIn: parent
-              source: root.currentSprite ? "file://" + root.currentSprite : ""
-              visible: source != ""
-              playing: visible
-              // Pixel art de 36x66 escalada: com smooth ligado vira borrão.
-              smooth: false
-              fillMode: Image.PreserveAspectFit
-              height: Math.min(parent.height, sourceSize.height * 2)
-              width: sourceSize.height > 0
-                     ? Math.round(height * sourceSize.width / sourceSize.height) : height
-            }
-
-            Text {
-              anchors.centerIn: parent
-              visible: !heroSprite.visible
-              textFormat: Text.PlainText
-              text: root.hatched ? "󰐝" : "󰪯"
-              color: Qt.darker(root.contentForeground, 1.4)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.displayLarge
-            }
-          }
-
-          Column {
-            id: heroLabels
-            anchors.left: heroArt.right
-            anchors.leftMargin: Style.space(12)
-            anchors.right: refreshButton.left
-            anchors.rightMargin: Style.space(8)
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(2)
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.displayName
-              color: root.contentForeground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-              elide: Text.ElideRight
-            }
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: {
-                var bits = [Balance.rarityLabel(root.rarity)]
-                if (root.hatched && root.line.length > 1)
-                  bits.push("estágio " + (root.stage + 1) + "/" + root.line.length)
-                return bits.join("  ·  ")
-              }
-              color: Qt.darker(root.contentForeground, 1.4)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideRight
-            }
-
-            Text {
-              width: parent.width
-              visible: root.graduations > 0
-              textFormat: Text.PlainText
-              text: root.graduations + (root.graduations === 1 ? " graduado" : " graduados")
-              color: Qt.darker(root.contentForeground, 1.6)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideRight
-            }
-          }
-
-          PanelActionButton {
-            id: refreshButton
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            iconText: "󰑐"
-            tooltipText: "Reavaliar o uso (r)"
-            foreground: root.contentForeground
-            onClicked: root.refresh()
-          }
-        }
-
-        // ---------- Progresso até o próximo estágio ----------
-        Column {
-          width: parent.width
-          spacing: Style.space(5)
-
-          Text {
-            width: parent.width
-            textFormat: Text.PlainText
-            text: Balance.formatTokens(root.barRemaining) + " " + root.nextLabel
-            color: root.contentForeground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
-          }
-
-          Rectangle {
-            width: parent.width
-            height: Style.space(6)
-            radius: height / 2
-            color: Qt.rgba(root.contentForeground.r, root.contentForeground.g,
-                           root.contentForeground.b, 0.15)
-
-            Rectangle {
-              height: parent.height
-              width: Math.min(parent.width, Math.max(parent.height, parent.width * root.barFraction))
-              radius: parent.radius
-              color: root.contentForeground
-
-              Behavior on width {
-                NumberAnimation { duration: 320; easing.type: Easing.OutCubic }
-              }
-            }
-          }
-
-          Text {
-            width: parent.width
-            textFormat: Text.PlainText
-            text: {
-              var into = root.hatched ? (root.progress ? root.progress.tokens : 0)
-                                      : root.tokensIntoStage
-              var of = root.hatched ? (root.progress ? root.progress.threshold : 0)
-                                    : root.hatchThreshold
-              return Balance.formatTokens(into) + " de " + Balance.formatTokens(of)
-                     + "  ·  " + Balance.formatTokens(root.lifetimeTokens) + " no total"
-            }
-            color: Qt.darker(root.contentForeground, 1.5)
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-        }
-
-        // ---------- Linha evolutiva ----------
-        // Formas futuras aparecem esmaecidas: dá para ver no que o bicho vai
-        // virar sem perder de vista em que estágio ele está agora.
-        Column {
-          width: parent.width
-          visible: root.line.length > 1
-          spacing: Style.space(6)
-
-          PanelSectionHeader {
-            text: "Linha evolutiva"
-            foreground: root.contentForeground
-            fontFamily: root.fontFamily
-          }
-
-          Row {
-            width: parent.width
-            spacing: Style.space(3)
-
-            Repeater {
-              model: root.line
-
-              Row {
-                id: formRow
-                required property var modelData
-                required property int index
-                spacing: Style.space(3)
-
-                readonly property bool reached: root.hatched && index <= root.stage
-                readonly property bool current: root.hatched && index === root.stage
-
-                Text {
-                  visible: formRow.index > 0
-                  anchors.verticalCenter: parent.verticalCenter
-                  textFormat: Text.PlainText
-                  text: "›"
-                  color: Qt.darker(root.contentForeground, 1.8)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                }
-
-                Column {
-                  spacing: Style.space(1)
-
-                  AnimatedImage {
-                    source: formRow.modelData && formRow.modelData.sprite
-                            ? "file://" + formRow.modelData.sprite : ""
-                    visible: source != ""
-                    // Só o estágio atual anima. Três GIFs em loop ao mesmo tempo
-                    // dão um painel inquieto e gastam GPU sem motivo.
-                    playing: formRow.current
-                    paused: !formRow.current
-                    smooth: false
-                    fillMode: Image.PreserveAspectFit
-                    height: Style.space(32)
-                    width: sourceSize.height > 0
-                           ? Math.round(height * sourceSize.width / sourceSize.height) : height
-                    opacity: formRow.reached ? 1 : 0.3
-                    anchors.horizontalCenter: parent.horizontalCenter
-                  }
-
-                  Text {
-                    textFormat: Text.PlainText
-                    text: Balance.speciesLabel(formRow.modelData ? formRow.modelData.name : "")
-                    color: formRow.current ? root.contentForeground
-                                           : Qt.darker(root.contentForeground, formRow.reached ? 1.4 : 1.9)
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: formRow.current
-                    anchors.horizontalCenter: parent.horizontalCenter
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        PanelSeparator {
-          visible: root.agentRows.length > 0
-          foreground: root.contentForeground
-        }
-
-        // ---------- De onde vêm os tokens ----------
-        // Resumo, não dashboard: "Detalhes" abre o omarchy.agents, que é quem
-        // tem os números completos.
-        Column {
-          width: parent.width
-          visible: root.agentRows.length > 0
           spacing: Style.space(4)
 
-          PanelSectionHeader {
-            text: "Agentes"
-            foreground: root.contentForeground
-            fontFamily: root.fontFamily
-          }
-
           Repeater {
-            model: root.agentRows
+            model: root.tabs
 
-            Item {
-              id: agentRow
+            Rectangle {
+              id: tabChip
               required property var modelData
-              width: parent.width
-              implicitHeight: agentName.implicitHeight
+              required property int index
+
+              readonly property bool active: root.tab === index
+
+              width: Math.max(label.implicitWidth + Style.space(16),
+                              (column.width - Style.space(8)) / root.tabs.length)
+              height: Style.space(24)
+              radius: Style.space(5)
+              color: active
+                     ? Qt.rgba(root.contentForeground.r, root.contentForeground.g,
+                               root.contentForeground.b, 0.14)
+                     : (hover.hovered
+                        ? Qt.rgba(root.contentForeground.r, root.contentForeground.g,
+                                  root.contentForeground.b, 0.06)
+                        : "transparent")
+
+              Behavior on color { ColorAnimation { duration: 120 } }
 
               Text {
-                id: agentName
-                anchors.left: parent.left
+                id: label
+                anchors.centerIn: parent
                 textFormat: Text.PlainText
-                text: agentRow.modelData.name
-                color: root.contentForeground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              Text {
-                anchors.right: parent.right
-                anchors.baseline: agentName.baseline
-                textFormat: Text.PlainText
-                text: {
-                  var bits = []
-                  if (agentRow.modelData.today > 0)
-                    bits.push(Balance.formatTokens(agentRow.modelData.today) + " hoje")
-                  if (agentRow.modelData.percent >= 0)
-                    bits.push(Math.round(agentRow.modelData.percent * 100) + "%")
-                  return bits.length ? bits.join("  ·  ") : "—"
-                }
-                color: agentRow.modelData.percent >= 0.8
-                       ? Color.urgent : Qt.darker(root.contentForeground, 1.4)
+                text: tabChip.modelData.label
+                color: tabChip.active ? root.contentForeground
+                                      : Qt.darker(root.contentForeground, 1.5)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
+                font.bold: tabChip.active
               }
+
+              HoverHandler { id: hover }
+              TapHandler { onTapped: root.setTab(tabChip.index) }
             }
           }
+        }
+
+        PanelSeparator { foreground: root.contentForeground }
+
+        // ---------- Conteúdo da aba ----------
+        //
+        // As três views são carregadas sob demanda e só a ativa existe: manter
+        // a grade do dex viva em segundo plano custaria imagens decodificadas
+        // sem ninguém olhando.
+        Loader {
+          id: viewLoader
+          width: parent.width
+          active: true
+          sourceComponent: root.tab === 0 ? companionComponent
+                           : root.tab === 1 ? dexComponent : logComponent
         }
 
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "r reavalia · a abre os detalhes · Esc fecha"
+          text: root.tab === 0
+                ? "←/→ troca de aba · r reavalia · a abre os detalhes · Esc fecha"
+                : "←/→ troca de aba · Esc fecha"
           color: Qt.darker(root.contentForeground, 1.8)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight
         }
       }
+    }
+  }
+
+  Component {
+    id: companionComponent
+    CompanionView {
+      width: viewLoader.width
+      host: root.host
+      bar: root.bar
+      foreground: root.contentForeground
+      fontFamily: root.fontFamily
+      onRefreshRequested: root.refresh()
+      onAgentsRequested: root.openAgents()
+    }
+  }
+
+  Component {
+    id: dexComponent
+    DexView {
+      width: viewLoader.width
+      collection: root.collection
+      foreground: root.contentForeground
+      fontFamily: root.fontFamily
+    }
+  }
+
+  Component {
+    id: logComponent
+    CatchLogView {
+      width: viewLoader.width
+      collection: root.collection
+      foreground: root.contentForeground
+      fontFamily: root.fontFamily
     }
   }
 }
