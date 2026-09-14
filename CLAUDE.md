@@ -81,7 +81,34 @@ entrada passaria a descrever a espécie errada. Um teste cobre isso
 `companion_key()` cai para `hatchedAt` quando não há id, para companions
 gravados antes deste campo existir.
 
-### 6. Os records do `omarchy.agents` são somente-leitura
+### 6. O que o bar mostra ≠ o companion real
+
+`currentSprite` e `displayName` são sempre o companion de verdade.
+`barSprite` e `barName` respeitam o Pokémon fixado (`representativeSpeciesId`).
+
+Só o botão do bar usa os segundos. Se você fizer o painel usar `barSprite`, ele
+passa a anunciar uma espécie com o estágio de outra — foi exatamente o bug que
+apareceu quando os dois eram a mesma propriedade.
+
+### 7. O XP da candy não entra na carteira
+
+A carteira é `lifetimeTokens − spentTokens`. Somar o XP da Rare Candy ao
+`lifetimeTokens` faria de cada candy uma máquina de dinheiro. O XP vai **só**
+para `tokensIntoStage`, e não é escalado pela dificuldade (escalar os dois se
+cancelaria). `tests/test_economy.py` abre com esse caso.
+
+### 8. A chave da janela de candy não pode ser a data
+
+O original proíbe em comentário, e o motivo é observável aqui: o `resetsAt` do
+limite de sessão do Claude vem string vazia. A chave é `<agente>:<label>`.
+
+Duas regras que parecem simplificáveis e não são: o rearme é só
+`percent < 1.0` (sem histerese — o percent de uma janela só cai na virada
+dela), e `candySeeded` marca as janelas já cheias na primeira execução **sem
+conceder**, senão ligar a feature com o semanal em 100% paga 5 candies
+retroativas.
+
+### 9. Os records do `omarchy.agents` são somente-leitura
 
 `~/.local/state/omarchy/agents/usage/*.json` são dados de outro plugin. Este
 aqui lê e nunca escreve, e **nunca** roda `omarchy-agent-usage-update` — quem
@@ -107,7 +134,10 @@ de um campo novo, leia de lá; não invente.
 ```bash
 tests/test_collection.py      # coleção e sorteio de shiny (puras, rápidas)
 tests/test_absorb.py          # acumulação e integração, contra os records reais
-tests/test_dex.mjs            # projeção do Pokédex
+tests/test_economy.py         # carteira, preços, candy, ovos, taxa de queima
+tests/test_ditto.py           # o easter egg: disfarce, shiny escondido, revelação
+tests/test_dex.mjs            # projeção do Pokédex, ownsSpecies, 2×
+tests/test_shop.mjs           # lista da loja, bag, humor
 bin/poke-sync index           # reconstrói o índice (deve dar 329 espécies base)
 bin/poke-sync hatch           # sorteia e baixa sprites
 omarchy restart shell         # única forma confiável de testar QML novo
@@ -117,9 +147,15 @@ Para forçar um shiny sem esperar 64 chocagens, troque `roll_shiny` no módulo �
 é o que os testes fazem:
 
 ```python
-ps.roll_shiny = lambda rng=None: True
+ps.roll_shiny = lambda rng=None, denominator=64: True
+ps.roll_ditto = lambda rarity, forms, rng=None: True
 ps.cmd_hatch([])
 ```
+
+O `cmd_absorb` só roda a progressão quando há **delta novo de tokens** — é o que
+o original faz. Um teste que injeta `tokensIntoStage` e espera evolução não vai
+funcionar; ele precisa somar tokens a um record (ver `Sandbox.bump` em
+`tests/test_ditto.py`).
 
 Para ver uma evolução sem esperar dias: edite `tokensIntoStage` em
 `state.json` para logo abaixo do limiar do estágio e rode

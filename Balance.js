@@ -218,6 +218,50 @@ function bagEntries(inventory) {
   return rows
 }
 
+// ---- Humor do companion --------------------------------------------------
+//
+// O companion reage ao ritmo de uso. Os cortes de tokens/min são os do original
+// (UsageStore.burnTier); a taxa em si vem do helper, que a mede entre duas
+// absorções.
+
+function burnTier(tokensPerMinute) {
+  var r = Number(tokensPerMinute) || 0
+  if (r <= 1000) return "idle"
+  if (r < 100000) return "normal"
+  if (r < 400000) return "fast"
+  return "blazing"
+}
+
+// A partir de quanto de um limite de janela o companion fica cansado.
+var TIRED_AT = 0.9
+
+// Por PRIORIDADE, não por combinação — a ordem é a do original
+// (CompanionStore.computeState) e é o que torna o resultado previsível:
+// ovo > evento recente > perto do limite > sem uso > ritmo.
+function mood(state, todayTokens, worstLimitPercent, recentEvent) {
+  if (!state || state.hatched !== true) return "egg"
+  if (recentEvent) return "levelUp"
+  if ((Number(worstLimitPercent) || 0) >= TIRED_AT) return "tired"
+  if ((Number(todayTokens) || 0) <= 0) return "sleep"
+
+  var tier = burnTier(state.burnRate)
+  if (tier === "idle") return "idle"
+  if (tier === "normal") return "working"
+  return "focus"
+}
+
+function moodLabel(m) {
+  switch (m) {
+    case "egg": return "incubando"
+    case "working": return "trabalhando"
+    case "focus": return "no foco"
+    case "tired": return "cansado"
+    case "sleep": return "dormindo"
+    case "levelUp": return "cresceu!"
+    default: return "de boa"
+  }
+}
+
 // ---- Formatação ----------------------------------------------------------
 
 // Compacto no estilo do original ("200.7M"). O bar tem pouquíssimo espaço e um

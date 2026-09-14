@@ -498,5 +498,25 @@ eq("peso nunca zera", ps_mod.hatch_weights(
       "isMythical": False}], col), [1])
 
 
+print("\n--- taxa de queima: tokens por minuto, para o humor ---")
+eq("delta em 2 min", ps_mod.burn_rate(200_000, 120), 100_000)
+eq("intervalo zero não divide por zero", ps_mod.burn_rate(100, 0), 0)
+eq("intervalo negativo (relógio andou para trás)", ps_mod.burn_rate(100, -5), 0)
+eq("sem ganho", ps_mod.burn_rate(0, 60), 0)
+# Um intervalo muito longo (máquina suspensa) dilui a taxa a quase nada, o que é
+# o comportamento certo: ninguém estava codando.
+eq("intervalo de um dia", ps_mod.burn_rate(60_000, 86_400), 41)
+
+print("\n--- o absorb registra a taxa e o instante ---")
+with Sandbox() as sb:
+    ps = load_helper()
+    sb.put_companion()
+    sb.put_state(hatched=True, candySeeded=True)
+    ps.cmd_absorb(['0.3'])                     # marca a régua
+    primeiro = sb.read('state.json')
+    eq("gravou o instante", isinstance(primeiro.get('lastAbsorbAt'), int), True)
+    eq("taxa inicial zero", primeiro.get('burnRate'), 0)
+
+
 print(f"\n{fails} FALHA(S)" if fails else "\nTodos os testes passaram")
 raise SystemExit(1 if fails else 0)

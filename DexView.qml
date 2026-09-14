@@ -14,9 +14,13 @@ Column {
   id: root
 
   property var collection: null
+  // 0 = o bar segue o companion.
+  property int representativeSpeciesId: 0
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
   property int maxHeight: Style.space(320)
+
+  signal pinRequested(int speciesId)
 
   readonly property var cells: Collection.dexEntries(collection)
   readonly property var stats: Collection.dexStats(collection)
@@ -136,6 +140,28 @@ Column {
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
           }
+
+          // Estrela do representativo: fixa esta espécie no bar. Aparece no
+          // hover e na que já está fixada, para não poluir a grade inteira.
+          Text {
+            visible: hover.hovered || root.representativeSpeciesId === cell.modelData.id
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            textFormat: Text.PlainText
+            text: root.representativeSpeciesId === cell.modelData.id ? "★" : "☆"
+            color: root.representativeSpeciesId === cell.modelData.id
+                   ? Color.urgent : Qt.darker(root.foreground, 1.5)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+
+            TapHandler {
+              // Clicar na estrela da já fixada desafixa: volta a seguir o
+              // companion.
+              onTapped: root.pinRequested(
+                root.representativeSpeciesId === cell.modelData.id
+                ? 0 : cell.modelData.id)
+            }
+          }
         }
 
         Text {
@@ -188,6 +214,7 @@ Column {
         bits.push(c.count + (c.count === 1 ? " criado" : " criados"))
         if (c.shiny) bits.push("✨")
         if (c.shinySprite !== "" && c.sprite !== "") bits.push("clique alterna a arte")
+        bits.push(root.representativeSpeciesId === c.id ? "★ no bar" : "☆ fixa no bar")
         return bits.join("  ·  ")
       }
       color: Qt.darker(root.foreground, 1.4)

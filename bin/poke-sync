@@ -476,6 +476,8 @@ DEFAULT_STATE = {
     "candyWindows": {},
     "candySeeded": False,
     "eggTier": None,
+    "burnRate": 0,
+    "lastAbsorbAt": 0,
 }
 
 
@@ -579,6 +581,7 @@ def cmd_absorb(argv: list[str]) -> int:
 
         hatch_requested = False
         graduated = False
+        reveal_requested = False
         if gained > 0:
             state["lifetimeTokens"] += gained
 
@@ -605,6 +608,20 @@ def cmd_absorb(argv: list[str]) -> int:
                                            difficulty, boost)
                 if graduated:
                     hatch_requested = True
+                elif (companion.get("dittoDisguise")
+                        and not companion.get("dittoRevealed")
+                        and state["stage"] >= 1):
+                    # A revelação acontece NO LUGAR da primeira evolução, e tem
+                    # de vir antes de qualquer graduação: se a espécie do
+                    # disfarce graduasse, ela entraria no Pokédex como se o
+                    # bicho tivesse sido aquilo o tempo todo.
+                    reveal_requested = True
+
+        # Taxa de queima do intervalo desde a última absorção. Serve só para o
+        # humor do companion, então uma estimativa grosseira basta.
+        anterior = int(state.get("lastAbsorbAt") or 0)
+        state["burnRate"] = burn_rate(gained, now - anterior) if anterior else 0
+        state["lastAbsorbAt"] = now
 
         # Candies por janela cheia. Roda a cada absorção, antes da escrita, e
         # é independente de ter havido delta: bater o limite não exige tokens
@@ -625,11 +642,41 @@ def cmd_absorb(argv: list[str]) -> int:
 
         if graduated:
             touched |= close_open_entry(collection, now, total_forms - 1)
+            nome = (companion or {}).get("name", "").replace("-", " ").title()
+            notify("🎓 Graduou!", f"{nome} entrou de vez no Pokédex."
+                                  " Um ovo novo está a caminho.")
         elif state["hatched"]:
             touched |= record_stage(collection, state["stage"])
 
         if touched:
             save_collection(collection)
+
+        if reveal_requested:
+            # O estágio volta a 0 porque a linha do Ditto tem uma forma só; o
+            # excedente que sobrou da evolução é o progresso inicial dele.
+            state["stage"] = 0
+            revealed = reveal_ditto(companion, now)
+            if revealed is not None:
+                write_json(state_path(), state)
+                collection = load_collection()
+                # A entrada aberta passa a descrever o Ditto: é o mesmo
+                # indivíduo (mesmo companionId), então sync_open_entry a
+                # atualiza em vez de abrir outra.
+                entry = open_entry(collection)
+                if entry is not None:
+                    entry["speciesId"] = DITTO_SPECIES_ID
+                    entry["name"] = revealed["name"]
+                    entry["rarity"] = revealed["rarity"]
+                    entry["line"] = [{"id": f.get("id"),
+                                      "name": f.get("name") or str(f.get("id")),
+                                      "sprite": f.get("sprite") or ""}
+                                     for f in revealed["evolutionLine"]
+                                     if f.get("id")]
+                    entry["finalStage"] = 0
+                    save_collection(collection)
+                notify("🎭 Era um Ditto!",
+                       "O seu companion nunca foi o que dizia ser."
+                       + (" E é shiny." if revealed.get("shiny") else ""))
 
         if hatch_requested:
             # cmd_hatch escreve o companion novo e abre a entrada dele, já com a
@@ -777,6 +824,18 @@ def has_graduated_line(collection: dict, base_species_id: int) -> bool:
     return False
 
 
+def burn_rate(gained: int, seconds: float) -> int:
+    """Tokens por minuto, para o humor do companion.
+
+    Um intervalo longo (máquina suspensa, shell fechado) dilui a taxa a quase
+    nada, e isso é o comportamento certo: ninguém estava codando. Intervalo zero
+    ou negativo — o relógio pode andar para trás — vira 0 em vez de estourar.
+    """
+    if seconds <= 0 or gained <= 0:
+        return 0
+    return int(gained / (seconds / 60.0))
+
+
 def advance_stages(state: dict, rarity: str, total_forms: int,
                    difficulty: float, growth_multiplier: int = 1) -> bool:
     """Avança quantos estágios os tokens acumulados cobrirem. Devolve se graduou.
@@ -921,6 +980,71 @@ def roll_shiny(rng=None, denominator: int = SHINY_RATE) -> bool:
     """
     source = rng if rng is not None else random
     return source.randrange(max(1, int(denominator))) == 0
+
+
+# ---- Ditto disfarçado -----------------------------------------------------
+#
+# 1 em 128 chocagens comuns de linha com 2+ formas é secretamente um Ditto, que
+# se revela no lugar da primeira evolução. Enquanto disfarçado o shiny fica
+# escondido: revelar um shiny junto com o Ditto é o ponto alto do easter egg, e
+# mostrar o brilho antes estragaria a surpresa duas vezes.
+
+DITTO_RATE = 128
+DITTO_SPECIES_ID = 132
+
+
+def roll_ditto(rarity: str, total_forms: int, rng=None) -> bool:
+    """Só linhas comuns com 2+ formas disfarçam.
+
+    Comum porque o disfarce é uma promoção (o Ditto tem capture_rate 35, ou
+    seja, `rare`); 2+ formas porque a revelação acontece NO LUGAR da primeira
+    evolução — sem evolução não há onde revelar.
+    """
+    if rarity != "common" or int(total_forms) < 2:
+        return False
+    source = rng if rng is not None else random
+    return source.randrange(DITTO_RATE) == 0
+
+
+def visible_shiny(companion: dict) -> bool:
+    """O shiny que a interface deve mostrar.
+
+    Um shiny ainda disfarçado é escondido em toda parte — bar, painel, dex.
+    """
+    c = companion or {}
+    if c.get("shiny") is not True:
+        return False
+    if c.get("dittoDisguise") and not c.get("dittoRevealed"):
+        return False
+    return True
+
+
+def reveal_ditto(companion: dict, now: int) -> dict | None:
+    """Troca o companion disfarçado pelo Ditto, preservando o indivíduo.
+
+    Mantém companionId, shiny e nature: é o mesmo bicho, que só nunca foi o que
+    dizia ser. A raridade é recalculada da espécie 132, e a linha passa a ter
+    uma forma só (Ditto não evolui).
+    """
+    entry = next((e for e in load_index() if e.get("id") == DITTO_SPECIES_ID), None)
+    if entry is None:
+        log("espécie 132 fora do índice; a revelação fica para a próxima")
+        return None
+
+    line = hydrate_sprites(evolution_line(DITTO_SPECIES_ID),
+                           companion.get("shiny") is True)
+    revealed = dict(companion)
+    revealed.update({
+        "baseSpeciesId": DITTO_SPECIES_ID,
+        "name": entry.get("name") or "ditto",
+        "rarity": rarity_for(entry),
+        "captureRate": entry.get("captureRate"),
+        "evolutionLine": line,
+        "dittoRevealed": True,
+        "revealedAt": now,
+    })
+    write_json(companion_path(), revealed)
+    return revealed
 
 
 # ---- Coleção (catch log) --------------------------------------------------
@@ -1104,17 +1228,21 @@ def cmd_hatch(argv: list[str]) -> int:
     shiny = roll_shiny(denominator=shiny_denominator(state.get("inventory")))
     line = hydrate_sprites(evolution_line(entry["id"]), shiny)
     now = int(time.time())
+    rarity = rarity_for(entry)
+    disguised = roll_ditto(rarity, len(line))
 
     companion = {
         "schemaVersion": 1,
         "companionId": uuid.uuid4().hex[:12],
         "baseSpeciesId": entry["id"],
         "name": entry["name"],
-        "rarity": rarity_for(entry),
+        "rarity": rarity,
         "shiny": shiny,
         # Só rótulo: existe para o Mint ter o que re-sortear. Sem stats, porque
         # o bloco de individualidade ficou fora de escopo.
         "nature": random.choice(NATURES),
+        "dittoDisguise": disguised,
+        "dittoRevealed": False,
         "captureRate": entry["captureRate"],
         "evolutionLine": line,
         "hatchedAt": now,

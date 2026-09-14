@@ -185,3 +185,72 @@ comportamento degradado mais benigno.
 **A lição:** quando o comportamento correto é feio, comente o porquê no lugar
 onde o próximo leitor vai querer "consertar". Os dois trechos acima parecem bug
 para quem chega depois.
+
+## 10. Uma economia de duas moedas sobre o mesmo número
+
+Os tokens fazem duas coisas ao mesmo tempo: medem o crescimento do Pokémon e são
+a carteira da loja. O original documenta isso num comentário sobre o preço da
+Rare Candy, e a consequência não é óbvia — se o XP da candy entrasse em
+`lifetimeTokens`, usar uma candy aumentaria o saldo, e a economia viraria
+infinita.
+
+Escrevi o teste desse caso antes do código, e foi o primeiro da suíte. Não
+porque eu previ o bug: porque o comentário do original dizia que o preço existia
+para conter uma dupla contagem, e eu quis saber qual era.
+
+**A lição:** quando um sistema cobra um preço que parece alto sem explicação, o
+motivo costuma estar numa interação que você ainda não viu. Vale procurar antes
+de "corrigir" o número.
+
+## 11. Duas propriedades que eram uma
+
+O Pokémon fixado no bar quebrou o painel de um jeito que os testes não pegariam:
+`currentSprite` passou a devolver a espécie fixada, e o painel — que usa a mesma
+propriedade — começou a anunciar "Corphish" com o estágio "2/2" do Crawdaunt.
+
+Nenhuma asserção falhou, porque a lógica de projeção estava certa. Só a captura
+de tela mostrou.
+
+A separação virou `currentSprite`/`displayName` (o bicho real, para o painel) e
+`barSprite`/`barName` (o fixado, só para o bar), com o porquê comentado no
+código e no `CLAUDE.md`.
+
+**A lição:** quando uma feature faz duas superfícies discordarem sobre o mesmo
+dado, a resposta é duas propriedades com nomes honestos, não um condicional
+dentro de uma. E teste visual pega classe de bug que teste de unidade não pega.
+
+## 12. Testes que injetam estado no lugar errado
+
+Escrevi quatro testes do Ditto que colocavam `tokensIntoStage` logo abaixo do
+limiar e esperavam a evolução. Todos falharam, e por um bom tempo pareceu bug na
+revelação.
+
+Não era: o `cmd_absorb` só roda a progressão quando há **delta novo de tokens** —
+que é o que o original faz, porque tokens bancados são consumidos no momento em
+que entram. Meus testes injetavam o progresso sem nunca entregar tokens.
+
+A correção foi os testes passarem a somar tokens a um record de verdade
+(`Sandbox.bump`), que é como o sistema realmente recebe crescimento.
+
+**A lição:** um teste que prepara estado por dentro em vez de pela porta da
+frente pode estar testando um caminho que não existe. Quando vários testes novos
+falham juntos e o código parece certo, desconfie do arranjo antes do alvo.
+
+## 13. Aritmética de balanceamento é fácil de errar de cabeça
+
+Errei três expectativas numéricas nesta fase, todas por conta mental:
+
+- Achei que a candy de 100M não evoluiria em dificuldade 0.3. O limiar ali é 75M.
+- Achei que em 0.1 ela subiria um estágio. A linha inteira custa 75M em 0.1, então
+  ela **gradua**.
+- Estimei que cinco abas de texto não caberiam em 340px. Medindo na fonte real,
+  somam 293px.
+
+Nos três casos o código estava certo e a minha conta errada. O que resolveu foi
+medir: `magick -format %w label:` para a largura do texto, e escrever a conta do
+limiar no comentário do teste em vez de confiar na memória.
+
+**A lição:** em sistema com tabela de balanceamento, escreva a aritmética no
+teste ao lado da asserção. O comentário "dif 0.2 numa linha de 2 formas:
+limiares 50M e 100M" vale mais que o número nu, porque o próximo leitor —
+inclusive você — vai querer conferir.

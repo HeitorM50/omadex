@@ -15,7 +15,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ptb-shop-'))
 const shim = join(dir, 'balance.mjs')
 writeFileSync(shim,
   readFileSync(join(PLUGIN, 'Balance.js'), 'utf8').replace(/^\.pragma library\s*/m, '')
-  + '\nexport { shopEntries, bagEntries, availableTokens, shopPrice, eggPrice, itemLabel };\n')
+  + '\nexport { shopEntries, bagEntries, availableTokens, shopPrice, eggPrice, itemLabel, burnTier, mood, moodLabel };\n')
 const B = await import(shim)
 
 let fails = 0
@@ -85,6 +85,38 @@ eq('inventário nulo na loja', B.shopEntries(null, 1).length, 6)
 eq('inventário nulo na bag', B.bagEntries(null), [])
 eq('dificuldade absurda é clampeada', B.shopPrice('mint', 999), 200000000)
 eq('dificuldade NaN cai no padrão', B.shopPrice('mint', NaN), 100000000)
+
+console.log('\n--- tiers de queima, os cortes do original ---')
+eq('1000 ainda é ocioso', B.burnTier(1000), 'idle')
+eq('1001 é normal', B.burnTier(1001), 'normal')
+eq('99999 é normal', B.burnTier(99999), 'normal')
+eq('100000 é rápido', B.burnTier(100000), 'fast')
+eq('399999 é rápido', B.burnTier(399999), 'fast')
+eq('400000 é blazing', B.burnTier(400000), 'blazing')
+eq('zero é ocioso', B.burnTier(0), 'idle')
+eq('nulo é ocioso', B.burnTier(null), 'idle')
+
+console.log('\n--- humor, por prioridade ---')
+const st = (o = {}) => ({ hatched: true, burnRate: 0, ...o })
+
+eq('sem chocar é ovo', B.mood(st({ hatched: false }), 0, 0), 'egg')
+eq('evento recente ganha de tudo',
+   B.mood(st({ burnRate: 999999 }), 0, 0.99, true), 'levelUp')
+eq('limite alto deixa cansado', B.mood(st({ burnRate: 200000 }), 5e6, 0.95), 'tired')
+eq('sem uso hoje é sono', B.mood(st(), 0, 0.1), 'sleep')
+eq('ocioso com uso hoje', B.mood(st({ burnRate: 10 }), 5e6, 0.1), 'idle')
+eq('trabalhando', B.mood(st({ burnRate: 50000 }), 5e6, 0.1), 'working')
+eq('focado', B.mood(st({ burnRate: 200000 }), 5e6, 0.1), 'focus')
+eq('blazing também é focado', B.mood(st({ burnRate: 900000 }), 5e6, 0.1), 'focus')
+eq('estado nulo', B.mood(null, 0, 0), 'egg')
+
+console.log('\n--- o limite só cansa a partir de 90% ---')
+eq('89% não cansa', B.mood(st({ burnRate: 10 }), 5e6, 0.89), 'idle')
+eq('90% cansa', B.mood(st({ burnRate: 10 }), 5e6, 0.90), 'tired')
+
+console.log('\n--- todo humor tem rótulo ---')
+for (const m of ['egg', 'idle', 'working', 'focus', 'tired', 'sleep', 'levelUp'])
+  eq(`rótulo de ${m}`, B.moodLabel(m).length > 0, true)
 
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTodos os testes passaram')
 process.exit(fails ? 1 : 0)

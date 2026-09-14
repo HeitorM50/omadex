@@ -21,7 +21,9 @@ Column {
   readonly property var line: host && host.evolutionLine ? host.evolutionLine : []
   readonly property int stage: host ? host.stage : 0
   readonly property string rarity: host ? host.rarity : "common"
-  readonly property bool shiny: host ? host.shiny === true : false
+  // shiny VISÍVEL: um Ditto ainda disfarçado esconde o brilho, porque revelar as
+  // duas coisas juntas é o ponto alto do easter egg.
+  readonly property bool shiny: host ? host.visibleShiny === true : false
   readonly property var progress: host ? host.progress : null
   readonly property real lifetimeTokens: host ? host.lifetimeTokens : 0
   readonly property int graduations: host ? host.graduations : 0
@@ -29,6 +31,13 @@ Column {
   readonly property real hatchThreshold: host ? host.hatchThreshold : 0
   readonly property real tokensIntoStage: host ? host.tokensIntoStage : 0
   readonly property string currentSprite: host && host.currentSprite ? host.currentSprite : ""
+  readonly property bool growthBoost: host ? host.growthBoost === true : false
+  readonly property string mood: host ? host.mood : "egg"
+  readonly property int celebration: host ? host.celebration : 0
+  readonly property bool dittoRevealed: host ? host.dittoRevealed === true : false
+  // O ovo "chocando" a partir de 90% do limiar: sem isso um ovo parado a 99%
+  // parece quebrado.
+  readonly property bool eggImminent: !hatched && barFraction >= 0.9
 
   // Antes de chocar a barra mostra o progresso do ovo; depois, o do estágio.
   readonly property real barFraction: {
@@ -90,9 +99,68 @@ Column {
         height: Math.min(parent.height, sourceSize.height * 2)
         width: sourceSize.height > 0
                ? Math.round(height * sourceSize.width / sourceSize.height) : height
+
+        // Pulo de celebração, na mola do original (resposta 0.5, amortecimento
+        // 0.55 viram ~360ms com leve overshoot).
+        transform: Scale {
+          id: pop
+          origin.x: heroSprite.width / 2
+          origin.y: heroSprite.height
+          xScale: 1
+          yScale: 1
+        }
+      }
+
+      // Flash branco por cima do sprite, que some em 0.8s.
+      Rectangle {
+        id: flash
+        anchors.fill: heroSprite
+        color: "white"
+        opacity: 0
+        visible: opacity > 0
+        radius: Style.space(4)
+      }
+
+      // O ovo balança a partir de 90%: é o sinal de que está quase.
+      SequentialAnimation {
+        running: root.eggImminent && !root.hatched
+        loops: Animation.Infinite
+        NumberAnimation { target: eggGlyph; property: "rotation"; to: 5
+                          duration: 350; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: eggGlyph; property: "rotation"; to: -5
+                          duration: 350; easing.type: Easing.InOutQuad }
+      }
+
+      // Dispara a celebração quando o contador do host muda — e não quando o
+      // painel abre. O host guarda o contador, então uma chocagem que aconteceu
+      // com o popout fechado ainda é celebrada na próxima abertura.
+      Connections {
+        target: root
+        function onCelebrationChanged() {
+          if (root.celebration <= 0) return
+          celebrate.restart()
+        }
+      }
+
+      SequentialAnimation {
+        id: celebrate
+        ParallelAnimation {
+          NumberAnimation { target: flash; property: "opacity"
+                            from: 0.85; to: 0; duration: 800
+                            easing.type: Easing.OutCubic }
+          SequentialAnimation {
+            NumberAnimation { targets: [pop]; properties: "xScale,yScale"
+                              from: 0.6; to: 1.08; duration: 220
+                              easing.type: Easing.OutCubic }
+            NumberAnimation { targets: [pop]; properties: "xScale,yScale"
+                              to: 1; duration: 140
+                              easing.type: Easing.OutCubic }
+          }
+        }
       }
 
       Text {
+        id: eggGlyph
         anchors.centerIn: parent
         visible: !heroSprite.visible
         textFormat: Text.PlainText
@@ -149,6 +217,41 @@ Column {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         elide: Text.ElideRight
+      }
+
+      Row {
+        width: parent.width
+        spacing: Style.space(5)
+
+        Text {
+          textFormat: Text.PlainText
+          text: Balance.moodLabel(root.mood)
+          color: root.mood === "tired" ? Color.urgent
+                                       : Qt.darker(root.foreground, 1.5)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        // A cápsula só aparece quando o bônus está ativo — é informação que
+        // explica por que a barra está andando rápido.
+        Rectangle {
+          visible: root.growthBoost && root.hatched
+          anchors.verticalCenter: parent.verticalCenter
+          width: boostLabel.implicitWidth + Style.space(8)
+          height: boostLabel.implicitHeight + Style.space(2)
+          radius: height / 2
+          color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.2)
+
+          Text {
+            id: boostLabel
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            text: "2× crescimento"
+            color: Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
       }
 
       Text {

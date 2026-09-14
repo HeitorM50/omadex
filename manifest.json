@@ -30,7 +30,8 @@
       "showLimitPercent": false,
       "seedFromExisting": false,
       "pollSeconds": 60,
-      "shopDifficulty": 1.0
+      "shopDifficulty": 1.0,
+      "representativeSpeciesId": 0
     },
     "schema": [
       {
@@ -90,6 +91,16 @@
         "step": 15,
         "defaultValue": 60,
         "description": "Rede de segurança: os records são observados por FileView e reagem na hora. Este timer só cobre o caso de uma escrita não gerar evento de arquivo."
+      },
+      {
+        "key": "representativeSpeciesId",
+        "type": "integer",
+        "label": "Pokémon fixado no bar",
+        "min": 0,
+        "max": 649,
+        "step": 1,
+        "defaultValue": 0,
+        "description": "Número da Pokédex da espécie a mostrar no bar, independente do companion em criação. 0 segue o companion. Mais fácil pela estrela na célula do Pokédex."
       }
     ]
   }

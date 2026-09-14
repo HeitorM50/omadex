@@ -79,6 +79,63 @@ nas duas versões pode alternar a arte no clique.
 O bar fica de fora de propósito: em 22px o sprite shiny já é a diferença
 visível, e mais um glifo só apertaria os vizinhos.
 
+### Economia
+
+Os tokens que você já queimou são moeda: a carteira é o total menos o que você
+já gastou. O popout tem **Bag** e **Loja**.
+
+Encher um limite de janela paga **Rare Candy** — 5 no semanal, 1 na sessão. Usar
+uma injeta 100M de crescimento. O momento em que você bate o teto passa a ser o
+momento em que o bicho cresce.
+
+A Loja é uma lista única em ordem de preço, com os valores do original:
+
+| | Preço | O que faz |
+|---|---|---|
+| Mint | 100M | sorteia outra nature |
+| Rare Candy | 500M | +100M de crescimento |
+| Ovo | 1B | descarta o atual e começa de novo |
+| Ovo Incomum | 2,5B | garante Incomum ou melhor |
+| Shiny Charm | 3B | shiny 1/64 → 1/48, para sempre |
+| Ovo Raro | 4B | garante Raro ou melhor |
+
+Dois números que parecem arbitrários e não são. A candy custa **5× o que
+entrega** porque os tokens servem de medidor de crescimento *e* de carteira;
+preço igual ao XP tornaria a compra um crescimento grátis. E os ovos com
+garantia são precificados pela razão da tabela de graduação, não pela de
+probabilidade — pela probabilidade, dois ovos incomuns bateriam um raro em
+todos os eixos e o grau superior viraria bem inferior.
+
+Comprar um ovo **libera** o companion atual: ele continua no Pokédex e no
+histórico com as formas que alcançou, mas não conta como graduação e não paga o
+bônus de 2×. O custo real é perder o progresso acumulado.
+
+### Ditto disfarçado
+
+Uma chocagem comum em 128, de linha com 2+ formas, é secretamente um Ditto. Ele
+se revela no lugar da primeira evolução. Enquanto disfarçado, **o shiny fica
+escondido** — revelar as duas coisas juntas é o ponto alto.
+
+### Vida
+
+O companion reage ao seu ritmo: ocioso, trabalhando, no foco, cansado perto de
+um limite, dormindo sem uso. A taxa sai dos tokens por minuto entre duas
+absorções, com os cortes do original.
+
+Chocar e evoluir dão flash e pulo, e o ovo balança a partir de 90% do limiar. A
+celebração é **guardada**: uma chocagem que aconteceu com o popout fechado ainda
+é celebrada na próxima abertura.
+
+Uma linha que você já graduou cresce **2× mais rápido**, com uma cápsula no
+painel explicando por que a barra anda ligeiro. E linhas já coletadas pesam
+metade no sorteio, para o Pokédex encher em vez de repetir.
+
+### Pokémon fixado no bar
+
+A estrela na célula do Pokédex fixa aquela espécie no bar, independente do
+companion em criação. O painel continua mostrando o bicho real e o progresso
+dele — só o bar para de seguir.
+
 ### O contador é monotônico
 
 Os records **não** servem como total histórico: o coletor do Codex só lê sessões
@@ -140,12 +197,21 @@ GraphQL da PokéAPI (0,7s) com fallback REST (~60s) se ele estiver fora.
 ### Testes
 
 ```bash
-tests/test_collection.py   # coleção e sorteio de shiny (funções puras)
+tests/test_collection.py   # coleção e sorteio de shiny
 tests/test_absorb.py       # absorção e integração, contra os records reais
-tests/test_dex.mjs         # projeção do Pokédex
+tests/test_economy.py      # carteira, preços, candy, ovos, taxa de queima
+tests/test_ditto.py        # disfarce, shiny escondido, revelação
+tests/test_dex.mjs         # projeção do Pokédex, ownsSpecies, 2×
+tests/test_shop.mjs        # lista da loja, bag, humor
 ```
 
-107 asserções. As que mais importam:
+331 asserções. As que mais importam:
+
+- **Usar candy não aumenta a carteira** (`test_economy.py`): a carteira é
+  lifetime menos gasto, então somar o XP da candy ao lifetime faria de cada
+  candy uma máquina de dinheiro.
+- **A primeira execução não paga candy retroativa**: ligar a feature com o
+  semanal em 100% marcaria 5 candies de graça.
 
 - **O record que encolhe** (`test_absorb.py`): `lifetimeTokens` não pode cair e
   o estágio não pode regredir quando sessões saem da janela de 30 dias do
@@ -155,6 +221,8 @@ tests/test_dex.mjs         # projeção do Pokédex
   como identidade de entrada.
 - **O ✨ só marca espécies alcançadas** (`test_dex.mjs`): um shiny que parou na
   forma base não dá o brilho na evolução que ele nunca virou.
+- **O Ditto esconde o shiny até revelar** (`test_ditto.py`), e a revelação não
+  gradua a espécie do disfarce para o Pokédex.
 
 Nenhum dos três toca a rede nem o seu estado real.
 
@@ -166,8 +234,8 @@ Nenhum dos três toca a rede nem o seu estado real.
   painel vizinho, Esc fecha.
 - **Pokédex:** o hover mostra o detalhe embaixo da grade; clicar numa espécie
   que você teve nas duas versões alterna entre a arte normal e a shiny.
-- **IPC:** `omarchy-shell io.github.heitorm50.poketokenbar <open|close|toggle|refresh|hatch|companion|dex|log>`
-  — `dex` e `log` abrem direto na aba, o que serve para um atalho de teclado.
+- **IPC:** `omarchy-shell io.github.heitorm50.poketokenbar <open|close|toggle|refresh|hatch|companion|dex|log|bag|shop>`
+  — as cinco últimas abrem direto numa aba, o que serve para um atalho de teclado.
 
 ## Settings
 
@@ -180,7 +248,9 @@ omarchy bar set io.github.heitorm50.poketokenbar spriteSize 26 --json
 
 | Chave | Padrão | O que faz |
 |---|---|---|
-| `difficulty` | `0.3` | Multiplica os limiares. 0.1–2.0; abaixo de 1 evolui mais rápido |
+| `difficulty` | `0.3` | Multiplica os limiares de crescimento. 0.1–2.0 |
+| `shopDifficulty` | `1.0` | Multiplica os preços da Loja, independente da de crescimento |
+| `representativeSpeciesId` | `0` | Espécie fixada no bar; 0 segue o companion |
 | `spriteSize` | `22` | Altura do sprite no bar, em px |
 | `showTokens` | `true` | Mostra os tokens de hoje ao lado do sprite |
 | `showLimitPercent` | `false` | Mostra o % do limite de janela mais apertado |

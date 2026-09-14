@@ -16,7 +16,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ptb-dex-'))
 const shim = join(dir, 'collection.mjs')
 writeFileSync(shim,
   readFileSync(join(PLUGIN, 'Collection.js'), 'utf8').replace(/^\.pragma library\s*/m, '')
-  + '\nexport { dexEntries, catchLogRows, dexStats, speciesReached };\n')
+  + '\nexport { dexEntries, catchLogRows, dexStats, speciesReached, ownsSpecies, dexCell, hasGraduatedLine };\n')
 const C = await import(shim)
 
 let fails = 0
@@ -127,6 +127,30 @@ eq('forma sem id é ignorada',
     .map(d => d.id), [7])
 eq('catch log de coleção nula', C.catchLogRows(null), [])
 eq('stats de coleção nula', C.dexStats(null), { species: 0, shiny: 0, individuals: 0 })
+
+console.log('\n--- ownsSpecies: fixar no bar exige ter a espécie ---')
+const um = col(entry({ finalStage: 1 }))
+eq('tem a base', C.ownsSpecies(um, 341), true)
+eq('tem a evolução alcançada', C.ownsSpecies(um, 342), true)
+eq('não tem o que nunca criou', C.ownsSpecies(um, 25), false)
+eq('não tem a forma não alcançada',
+   C.ownsSpecies(col(entry({ finalStage: 0 })), 342), false)
+eq('coleção nula', C.ownsSpecies(null, 341), false)
+
+console.log('\n--- dexCell: a célula de uma espécie, para o bar ---')
+eq('devolve a célula', C.dexCell(um, 342).name, 'crawdaunt')
+eq('espécie ausente devolve nulo', C.dexCell(um, 25), null)
+eq('coleção nula', C.dexCell(null, 341), null)
+
+console.log('\n--- hasGraduatedLine no JS bate com o do helper ---')
+eq('aberta não conta', C.hasGraduatedLine(col(entry({ finalStage: 1 })), 341), false)
+eq('graduada no fim conta',
+   C.hasGraduatedLine(col(entry({ finalStage: 1, graduatedAt: 9 })), 341), true)
+eq('graduada sem chegar ao fim não conta',
+   C.hasGraduatedLine(col(entry({ finalStage: 0, graduatedAt: 9 })), 341), false)
+eq('liberada não conta',
+   C.hasGraduatedLine(col(entry({ finalStage: 1, graduatedAt: null,
+                                 releasedAt: 9 })), 341), false)
 
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTodos os testes passaram')
 process.exit(fails ? 1 : 0)

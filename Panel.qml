@@ -68,6 +68,10 @@ Panel {
     if (host && typeof host.use === "function") host.use(key)
   }
 
+  function pin(speciesId) {
+    if (host && typeof host.pin === "function") host.pin(speciesId)
+  }
+
   // Abre o painel rico do omarchy.agents, que é quem tem os números detalhados.
   function openAgents() {
     if (bar) bar.run("omarchy-shell omarchy.agents toggle")
@@ -226,8 +230,10 @@ Panel {
     DexView {
       width: viewLoader.width
       collection: root.collection
+      representativeSpeciesId: root.host ? root.host.representativeSpeciesId : 0
       foreground: root.contentForeground
       fontFamily: root.fontFamily
+      onPinRequested: function (speciesId) { root.pin(speciesId) }
     }
   }
 

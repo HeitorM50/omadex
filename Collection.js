@@ -113,6 +113,44 @@ function dexStats(collection) {
   }
 }
 
+// Você tem esta espécie? Só conta o que o companion de fato alcançou — a mesma
+// regra do dex. Fixar no bar algo que você nunca criou seria mentir sobre a
+// coleção.
+function ownsSpecies(collection, speciesId) {
+  var all = entriesOf(collection)
+  for (var i = 0; i < all.length; i++) {
+    var forms = speciesReached(all[i])
+    for (var f = 0; f < forms.length; f++) if (forms[f].id === speciesId) return true
+  }
+  return false
+}
+
+// A célula do dex de uma espécie, para o bar desenhar o representativo sem
+// reprojetar a grade inteira.
+function dexCell(collection, speciesId) {
+  var cells = dexEntries(collection)
+  for (var i = 0; i < cells.length; i++) if (cells[i].id === speciesId) return cells[i]
+  return null
+}
+
+// Espelha `has_graduated_line` do helper: a linha desta espécie base já foi
+// levada até o fim E graduada. Liberada por compra de ovo não conta.
+//
+// Aqui é só para o painel mostrar a cápsula de 2×; a conta que vale, a que muda
+// o limiar, é a do helper.
+function hasGraduatedLine(collection, baseSpeciesId) {
+  var all = entriesOf(collection)
+  for (var i = 0; i < all.length; i++) {
+    var entry = all[i]
+    if (entry.speciesId !== baseSpeciesId) continue
+    if (entry.graduatedAt === null || entry.graduatedAt === undefined) continue
+    var line = entry.line
+    if (!Array.isArray(line) || line.length === 0) continue
+    if ((entry.finalStage | 0) >= line.length - 1) return true
+  }
+  return false
+}
+
 // ---- Formatação ----------------------------------------------------------
 
 // Data curta para a linha do catch log. Epoch em segundos.

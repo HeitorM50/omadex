@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Balance.js" as Balance
+import "Collection.js" as Collection
 
 // Sprite do companion no bar, e host do popout.
 //
@@ -53,6 +54,20 @@ BarWidget {
   readonly property bool seedFromExisting: setting("seedFromExisting", false) === true
   readonly property int pollSeconds: Math.max(15, parseInt(setting("pollSeconds", 60), 10) || 60)
 
+  // Espécie fixada no bar, independente do companion que está sendo criado.
+  // 0 = segue o companion. Só vale se a espécie estiver no Pokédex: fixar algo
+  // que você não tem seria mentir sobre a coleção.
+  readonly property int representativeSpeciesId: {
+    var raw = parseInt(setting("representativeSpeciesId", 0), 10) || 0
+    if (raw <= 0 || !collection) return 0
+    return Collection.ownsSpecies(collection, raw) ? raw : 0
+  }
+
+  readonly property var representative: {
+    if (representativeSpeciesId <= 0 || !collection) return null
+    return Collection.dexCell(collection, representativeSpeciesId)
+  }
+
   // ---- Companion e progressão, ambos escritos pelo helper
   property var companion: null
   property var progressState: null
@@ -61,6 +76,25 @@ BarWidget {
                                        ? companion.evolutionLine : []
   readonly property string rarity: companion && companion.rarity ? companion.rarity : "common"
   readonly property bool shiny: companion ? companion.shiny === true : false
+  readonly property bool dittoDisguise: companion ? companion.dittoDisguise === true : false
+  readonly property bool dittoRevealed: companion ? companion.dittoRevealed === true : false
+
+  // O shiny que a interface pode mostrar. Um Ditto ainda disfarçado esconde o
+  // brilho: revelar as duas coisas juntas é o ponto alto do easter egg.
+  readonly property bool visibleShiny: shiny && (!dittoDisguise || dittoRevealed)
+
+  // 2 quando a linha base já foi graduada antes. A conta é do helper; aqui é só
+  // para o painel poder mostrar a cápsula que explica a barra andando rápido.
+  readonly property bool growthBoost: {
+    if (!companion || !collection) return false
+    return Collection.hasGraduatedLine(collection, companion.baseSpeciesId)
+  }
+
+  readonly property real burnRate: progressState ? (progressState.burnRate || 0) : 0
+  readonly property var worstLimit2: worstLimit
+  readonly property string mood: Balance.mood(progressState, todayTokens,
+                                              worstLimit ? worstLimit.percent : 0,
+                                              celebration > 0 && eventFresh)
 
   // Catch log completo. O Pokédex de espécies é projeção disto (Collection.js),
   // calculada na hora de desenhar — por isso não há arquivo de dex.
@@ -72,6 +106,36 @@ BarWidget {
   readonly property real tokensIntoStage: progressState ? (progressState.tokensIntoStage || 0) : 0
   readonly property real lifetimeTokens: progressState ? (progressState.lifetimeTokens || 0) : 0
   readonly property int graduations: progressState ? (progressState.graduations || 0) : 0
+
+  // ---- Celebração
+  //
+  // Guardar o contador aqui (e não na view) é o que faz uma chocagem ocorrida
+  // com o popout fechado ainda ser celebrada na próxima abertura — o original
+  // aprendeu isso na prática.
+  property int celebration: 0
+  property bool eventFresh: false
+  property string lastCelebratedKey: ""
+
+  function noteEvent() {
+    // A chave inclui estágio e espécie: chocar, evoluir e revelar Ditto mudam
+    // pelo menos uma das duas.
+    var key = (companion ? companion.companionId : "") + ":" + stage + ":"
+              + (hatched ? "1" : "0")
+    if (key === lastCelebratedKey) return
+    // A primeira leitura do estado não é um evento — é só o plugin subindo.
+    var first = lastCelebratedKey === ""
+    lastCelebratedKey = key
+    if (first) return
+    celebration += 1
+    eventFresh = true
+    eventWindow.restart()
+  }
+
+  Timer {
+    id: eventWindow
+    interval: 5000
+    onTriggered: root.eventFresh = false
+  }
 
   // ---- Records de uso, por id. Só para exibição: o helper lê os mesmos
   //      arquivos por conta própria quando absorve.
@@ -119,6 +183,21 @@ BarWidget {
     return Balance.speciesLabel(form ? form.name : "")
   }
 
+  // ---- O que o BAR mostra. Divergem do companion só quando há espécie fixada:
+  //      o bar para de seguir chocagem e evolução, mas o painel continua
+  //      mostrando o bicho real e o progresso dele. Confundir os dois faz o
+  //      painel anunciar uma espécie com o estágio de outra.
+  readonly property string barSprite: {
+    if (representative)
+      return representative.shinySprite || representative.sprite || ""
+    return currentSprite
+  }
+
+  readonly property string barName: {
+    if (representative) return Balance.speciesLabel(representative.name)
+    return displayName
+  }
+
   // ---- Leitura dos arquivos
 
   // Manter o último valor bom é melhor que esvaziar o bar por um instante: uma
@@ -136,7 +215,7 @@ BarWidget {
   }
 
   function applyState(raw) {
-    parseInto(raw, function (p) { root.progressState = p })
+    parseInto(raw, function (p) { root.progressState = p; root.noteEvent() })
   }
 
   function applyCollection(raw) {
@@ -182,6 +261,15 @@ BarWidget {
     if (useProc.running) return
     useProc.key = key
     useProc.running = true
+  }
+
+  // Fixar é preferência, não progresso, então vive nas settings do widget
+  // (shell.json) e não no state.json — é o mesmo critério do original, que as
+  // guarda em UserDefaults e não no save.
+  function pin(speciesId) {
+    if (pinProc.running) return
+    pinProc.value = String(Math.max(0, speciesId | 0))
+    pinProc.running = true
   }
 
   // Os FileViews observam os arquivos, mas uma compra é uma mudança que a pessoa
@@ -356,6 +444,18 @@ BarWidget {
   }
 
   Process {
+    id: pinProc
+    property string value: "0"
+    command: ["omarchy", "bar", "set", root.moduleName,
+              "representativeSpeciesId", value, "--json"]
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function (code) {
+      if (code !== 0) console.warn(root.moduleName, "não deu para fixar a espécie")
+    }
+  }
+
+  Process {
     id: hatchProc
     command: [root.pluginDir + "/bin/poke-sync", "hatch"]
     stdout: StdioCollector { waitForEnd: true }
@@ -416,7 +516,7 @@ BarWidget {
     // um ícone e um sprite não-quadrado com texto ao lado não cabe.
     fixedWidth: root.vertical ? -1 : content.implicitWidth + Style.space(12)
     tooltipText: {
-      var parts = [root.displayName]
+      var parts = [root.barName]
       if (root.hatched) {
         parts.push(Balance.rarityLabel(root.rarity)
                    + " · estágio " + (root.stage + 1) + "/" + root.totalForms)
@@ -426,6 +526,8 @@ BarWidget {
         parts.push(Balance.formatTokens(Math.max(0, root.hatchThreshold - root.tokensIntoStage))
                    + " tokens até chocar")
       }
+      if (root.representative)
+        parts.push("fixado — o companion real está no painel")
       if (root.todayTokens > 0) parts.push("Hoje: " + Balance.formatTokens(root.todayTokens))
       return parts.join("\n")
     }
@@ -442,7 +544,7 @@ BarWidget {
 
       AnimatedImage {
         id: sprite
-        source: root.currentSprite ? "file://" + root.currentSprite : ""
+        source: root.barSprite ? "file://" + root.barSprite : ""
         visible: source != ""
         playing: visible
         anchors.verticalCenter: parent.verticalCenter
