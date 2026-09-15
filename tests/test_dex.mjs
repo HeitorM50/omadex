@@ -16,7 +16,7 @@ const dir = mkdtempSync(join(tmpdir(), 'ptb-dex-'))
 const shim = join(dir, 'collection.mjs')
 writeFileSync(shim,
   readFileSync(join(PLUGIN, 'Collection.js'), 'utf8').replace(/^\.pragma library\s*/m, '')
-  + '\nexport { dexEntries, catchLogRows, dexStats, speciesReached, ownsSpecies, dexCell, hasGraduatedLine, visibleShiny };\n')
+  + '\nexport { dexEntries, catchLogRows, dexStats, speciesReached, ownsSpecies, dexCell, hasGraduatedLine, visibleShiny, individualsOf };\n')
 const C = await import(shim)
 
 let fails = 0
@@ -35,6 +35,9 @@ const entry = (o = {}) => ({
   speciesId: o.speciesId ?? 341,
   name: o.name ?? 'corphish',
   rarity: o.rarity ?? 'common',
+  // O factory tem de repassar TODO campo que algum teste passa: um campo
+  // esquecido aqui é um teste que passa sem exercitar nada.
+  nature: o.nature ?? null,
   shiny: o.shiny ?? false,
   line: o.line ?? [{ id: 341, name: 'corphish' }, { id: 342, name: 'crawdaunt' }],
   hatchedAt: o.hatchedAt ?? 1000,
@@ -217,6 +220,49 @@ eq('coleção nula também', C.dexStats(null).byRarity,
    { common: 0, uncommon: 0, rare: 0, legendary: 0 })
 // A mesma espécie chocada duas vezes é UMA no chip.
 eq('espécie repetida conta uma vez', C.dexStats(repetida).byRarity.common, 1)
+
+console.log('\n--- individualsOf: os indivíduos por trás de uma célula do dex ---')
+// Uma célula do Pokédex pode ser a mesma espécie de vários indivíduos. O perfil
+// precisa de cada um deles, e só dos que REALMENTE alcançaram aquela forma.
+const tres = col(
+  entry({ companionId: 'a', nature: 'bold', finalStage: 1, hatchedAt: 1000,
+          graduatedAt: 1500 }),
+  entry({ companionId: 'b', nature: 'jolly', finalStage: 0, hatchedAt: 2000 }),
+  entry({ companionId: 'c', speciesId: 25, line: [{ id: 25, name: 'pikachu' }],
+          hatchedAt: 3000 }))
+eq('a base tem dois indivíduos',
+   C.individualsOf(tres, 341).map(i => i.companionId), ['b', 'a'])
+eq('a evolução tem só quem chegou lá',
+   C.individualsOf(tres, 342).map(i => i.companionId), ['a'])
+eq('espécie de outra linha não se mistura',
+   C.individualsOf(tres, 25).map(i => i.companionId), ['c'])
+eq('espécie que ninguém teve', C.individualsOf(tres, 999), [])
+eq('coleção nula', C.individualsOf(null, 341), [])
+
+console.log('\n--- a linha do indivíduo carrega o que o perfil precisa ---')
+const [novo, velho] = C.individualsOf(tres, 341)
+eq('mais recente primeiro', [novo.companionId, velho.companionId], ['b', 'a'])
+eq('natureza', novo.nature, 'jolly')
+eq('sem natureza gravada fica nula',
+   C.individualsOf(col(entry({ companionId: 'x' })), 341)[0].nature, null)
+eq('o aberto é o companion de agora', novo.current, true)
+eq('o graduado não', velho.current, false)
+eq('graduado é marcado como graduado', velho.graduated, true)
+eq('o estágio alcançado', velho.finalStage, 1)
+eq('o tamanho da linha', velho.lineLength, 2)
+eq('a raridade', velho.rarity, 'common')
+eq('a data de chocagem', velho.hatchedAt, 1000)
+// Liberado não é graduado: o nível dele é o que o estágio prova, não 100.
+const liberado = col(entry({ companionId: 'r', finalStage: 1, releasedAt: 9 }))
+eq('liberado não conta como graduado',
+   C.individualsOf(liberado, 342)[0].graduated, false)
+eq('e também não é o companion de agora',
+   C.individualsOf(liberado, 342)[0].current, false)
+eq('e é marcado como liberado', C.individualsOf(liberado, 342)[0].released, true)
+// O shiny escondido do Ditto continua escondido aqui.
+eq('shiny de Ditto disfarçado não aparece',
+   C.individualsOf(col(entry({ shiny: true, dittoDisguise: true })), 341)[0].shiny,
+   false)
 
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTodos os testes passaram')
 process.exit(fails ? 1 : 0)

@@ -7,6 +7,7 @@ bin/gcal-sync: credencial e rede ficam fora do processo do shell.
 
 Subcomandos:
   absorb <dif>     acumula os tokens novos dos records e avança a progressão
+  details <id>     busca e cacheia os dados de espécie do perfil do indivíduo
   buy <item> <dif> [grau]   compra na loja (rareCandy|mint|shinyCharm|egg)
   use <item> <dif>          usa um item da bag (rareCandy|mint)
   hatch            sorteia uma espécie base, resolve a linha e baixa os sprites
@@ -1211,6 +1212,11 @@ def entry_from_companion(companion: dict, now: int) -> dict:
                   "name": f.get("name") or str(f.get("id")),
                   "sprite": f.get("sprite") or ""}
                  for f in line if f.get("id")],
+        # A natureza é a única parte do perfil que NÃO sai de um seed: o Mint a
+        # re-sorteia, então é mutável e tem de ser gravada. Sem ela aqui, o
+        # perfil de um indivíduo já graduado não teria natureza nenhuma — e
+        # sortear uma na hora mostraria uma que aquele bicho nunca teve.
+        "nature": companion.get("nature"),
         "hatchedAt": companion.get("hatchedAt") or now,
         "graduatedAt": None,
         "finalStage": 0,
@@ -1245,6 +1251,15 @@ def sync_open_entry(collection: dict, companion: dict, now: int) -> bool:
     # seguinte o acrescentava de novo como entrada aberta: o mesmo indivíduo
     # aparecia duas vezes, e o graduado voltava a ser companion no estágio 0.
     if any(e.get("companionId") == key for e in collection["entries"]):
+        # O Mint troca a natureza do companion vivo. A entrada dele tem de
+        # acompanhar, senão o histórico descreve a natureza antiga. Só a ABERTA:
+        # uma entrada fechada guarda a natureza que aquele indivíduo tinha, e
+        # reescrevê-la seria reescrever o passado.
+        aberta = open_entry(collection)
+        if (aberta is not None and aberta.get("companionId") == key
+                and aberta.get("nature") != companion.get("nature")):
+            aberta["nature"] = companion.get("nature")
+            changed = True
         return changed
 
     if open_entry(collection) is None:
@@ -1371,6 +1386,277 @@ def cmd_sprites(argv: list[str]) -> int:
             continue
         path = download_sprite(int(raw))
         log(f"{raw}: {path or 'indisponível'}")
+    return 0
+
+
+# ---- Detalhes de espécie (perfil do indivíduo) ---------------------------
+#
+# Uma consulta traz tudo que o perfil precisa: stats base, habilidades com slot
+# e flag de oculta, learnset de nível, oitavos de fêmea, genus e descrição.
+# São dados imutáveis, então o cache não expira.
+#
+# Idioma: inglês (id 9), fixo. A PokéAPI não tem pt-BR — medido na própria API:
+# 0 descrições, 0 nomes de espécie, 0 nomes de golpe e 12 nomes de habilidade de
+# ~370. Um seletor de idioma entregaria inglês em 100% dos casos.
+DETAILS_LANG = 9
+
+# O learnset é filtrado por version group porque um Pokémon aprende coisas
+# diferentes em cada jogo, e uma lista com todos os grupos daria dezenas de
+# entradas para o mesmo golpe. Black 2/White 2 é a geração V, que é o teto do
+# pool de chocagem (é até onde existe sprite animado).
+DETAILS_VERSION_GROUP = "black-2-white-2"
+
+# move_learn_method_id 1 = level-up. O nome do campo é snake_case e NÃO se
+# adivinha: `movelearnmethod_id` (que é como o relacionamento se chama) devolve
+# "field not found". Descoberto por introspecção, depois de errar.
+DETAILS_QUERY = """
+query Details($id: Int!, $lang: Int!, $group: String!) {
+  pokemon(
+    where: {pokemon_species_id: {_eq: $id}, is_default: {_eq: true}}
+    limit: 1
+  ) {
+    id
+    name
+    height
+    weight
+    pokemontypes(order_by: {slot: asc}) { type { name } }
+    pokemonstats { base_stat stat { name } }
+    pokemonabilities(order_by: {slot: asc}) {
+      is_hidden
+      slot
+      ability { name }
+    }
+    pokemonmoves(
+      where: {move_learn_method_id: {_eq: 1}, versiongroup: {name: {_eq: $group}}}
+      order_by: {level: asc}
+    ) {
+      level
+      move { name }
+    }
+  }
+  pokemonspecies(where: {id: {_eq: $id}}) {
+    gender_rate
+    capture_rate
+    pokemonspeciesnames(where: {language_id: {_eq: $lang}}) { genus }
+    pokemonspeciesflavortexts(where: {language_id: {_eq: $lang}}, limit: 1) {
+      flavor_text
+    }
+  }
+}
+"""
+
+
+def details_path(species_id: int) -> str:
+    return os.path.join(cache_dir(), "details", f"{int(species_id)}.json")
+
+
+def clean_flavor(text: str) -> str:
+    """Achata o flavor text da PokéAPI numa linha.
+
+    Ele vem com as quebras de linha do jogo e um \f separando páginas; renderizar
+    isso cru abre buracos na coluna estreita do painel.
+    """
+    s = str(text or "")
+    for ch in ("\n", "\r", "\f", "\x0c", "\u00ad"):
+        s = s.replace(ch, " ")
+    return " ".join(s.split())
+
+
+def normalize_details_graphql(payload: dict | None, species_id: int) -> dict | None:
+    """Converte o payload da consulta na forma que o Profile.js consome.
+
+    Devolve None quando não há forma default para a espécie — sem stats base não
+    há perfil, e cachear um objeto vazio faria a view mostrar um perfil quebrado
+    para sempre, sem nunca tentar de novo.
+    """
+    data = (payload or {}).get("data") or {}
+    formas = data.get("pokemon") or []
+    if not formas:
+        return None
+    forma = formas[0]
+
+    especies = data.get("pokemonspecies") or []
+    especie = especies[0] if especies else {}
+
+    stats = {}
+    for row in forma.get("pokemonstats") or []:
+        nome = ((row.get("stat") or {}).get("name"))
+        if nome and isinstance(row.get("base_stat"), int):
+            stats[nome] = row["base_stat"]
+
+    habilidades = []
+    for row in forma.get("pokemonabilities") or []:
+        nome = ((row.get("ability") or {}).get("name"))
+        if not nome:
+            continue
+        habilidades.append({"name": nome, "slot": int(row.get("slot") or 0),
+                            "isHidden": bool(row.get("is_hidden"))})
+
+    golpes = []
+    for row in forma.get("pokemonmoves") or []:
+        nome = ((row.get("move") or {}).get("name"))
+        if not nome:
+            continue
+        golpes.append({"name": nome, "level": int(row.get("level") or 0)})
+
+    tipos = [((row.get("type") or {}).get("name"))
+             for row in forma.get("pokemontypes") or []]
+
+    nomes = especie.get("pokemonspeciesnames") or []
+    textos = especie.get("pokemonspeciesflavortexts") or []
+
+    return {
+        "schemaVersion": 1,
+        "speciesId": int(species_id),
+        "name": forma.get("name") or str(species_id),
+        "genus": (nomes[0].get("genus") if nomes else "") or "",
+        "flavorText": clean_flavor(textos[0].get("flavor_text")) if textos else "",
+        "height": forma.get("height"),
+        "weight": forma.get("weight"),
+        "types": [t for t in tipos if t],
+        # −1 (sem gênero) e não 0 (sempre macho) quando a espécie não veio: um
+        # default de 0 afirmaria algo falso sobre o bicho.
+        "genderRate": especie.get("gender_rate") if isinstance(
+            especie.get("gender_rate"), int) else -1,
+        "captureRate": especie.get("capture_rate"),
+        "baseStats": stats,
+        "abilities": habilidades,
+        "moves": golpes,
+    }
+
+
+def fetch_details_graphql(species_id: int) -> dict:
+    check_host(GRAPHQL_ENDPOINT)
+    body = json.dumps({
+        "query": DETAILS_QUERY,
+        "variables": {"id": int(species_id), "lang": DETAILS_LANG,
+                      "group": DETAILS_VERSION_GROUP},
+    })
+    request = urllib.request.Request(
+        GRAPHQL_ENDPOINT,
+        data=body.encode(),
+        headers={"User-Agent": USER_AGENT, "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        return json.loads(response.read())
+
+
+def fetch_details_rest(species_id: int) -> dict | None:
+    """Plano B: /pokemon/{id} e /pokemon-species/{id}, duas requisições.
+
+    Existe pelo mesmo motivo do fallback do índice: o endpoint GraphQL já caiu
+    neste projeto. Sem ele, um GraphQL fora deixaria o perfil inacessível mesmo
+    com a REST no ar. Os nomes vêm em slug, que é o bastante — a UI é em inglês,
+    e "hyper-cutter" viram "Hyper Cutter" na formatação.
+    """
+    mon = fetch(f"{API}/pokemon/{int(species_id)}")
+    especie = fetch(f"{API}/pokemon-species/{int(species_id)}")
+
+    stats = {}
+    for row in mon.get("stats") or []:
+        nome = ((row.get("stat") or {}).get("name"))
+        if nome and isinstance(row.get("base_stat"), int):
+            stats[nome] = row["base_stat"]
+    if not stats:
+        return None
+
+    habilidades = []
+    for row in mon.get("abilities") or []:
+        nome = ((row.get("ability") or {}).get("name"))
+        if not nome:
+            continue
+        habilidades.append({"name": nome, "slot": int(row.get("slot") or 0),
+                            "isHidden": bool(row.get("is_hidden"))})
+
+    golpes = []
+    for row in mon.get("moves") or []:
+        nome = ((row.get("move") or {}).get("name"))
+        if not nome:
+            continue
+        melhor = None
+        for detalhe in row.get("version_group_details") or []:
+            metodo = ((detalhe.get("move_learn_method") or {}).get("name"))
+            grupo = ((detalhe.get("version_group") or {}).get("name"))
+            if metodo != "level-up" or grupo != DETAILS_VERSION_GROUP:
+                continue
+            nivel = int(detalhe.get("level_learned_at") or 0)
+            melhor = nivel if melhor is None else min(melhor, nivel)
+        if melhor is not None:
+            golpes.append({"name": nome, "level": melhor})
+    golpes.sort(key=lambda g: (g["level"], g["name"]))
+
+    genus = ""
+    for row in especie.get("genera") or []:
+        if ((row.get("language") or {}).get("name")) == "en":
+            genus = row.get("genus") or ""
+            break
+
+    flavor = ""
+    for row in especie.get("flavor_text_entries") or []:
+        if ((row.get("language") or {}).get("name")) == "en":
+            flavor = clean_flavor(row.get("flavor_text"))
+            break
+
+    return {
+        "schemaVersion": 1,
+        "speciesId": int(species_id),
+        "name": mon.get("name") or str(species_id),
+        "genus": genus,
+        "flavorText": flavor,
+        "height": mon.get("height"),
+        "weight": mon.get("weight"),
+        "types": [((t.get("type") or {}).get("name"))
+                  for t in sorted(mon.get("types") or [],
+                                  key=lambda t: t.get("slot") or 0)
+                  if (t.get("type") or {}).get("name")],
+        "genderRate": especie.get("gender_rate") if isinstance(
+            especie.get("gender_rate"), int) else -1,
+        "captureRate": especie.get("capture_rate"),
+        "baseStats": stats,
+        "abilities": habilidades,
+        "moves": golpes,
+    }
+
+
+def cmd_details(argv: list[str]) -> int:
+    """details <speciesId> — busca e cacheia os dados de espécie do perfil."""
+    if not argv or not str(argv[0]).isdigit():
+        log("uso: omapkdex-sync details <speciesId>")
+        return 2
+    species_id = int(argv[0])
+    if not 1 <= species_id <= MAX_SPECIES:
+        log(f"espécie fora da faixa 1-{MAX_SPECIES}: {species_id}")
+        return 2
+
+    caminho = details_path(species_id)
+    # isfile, não exists: um diretório com esse nome (ou qualquer coisa que não
+    # seja arquivo) fazia o subcomando devolver 0 sem escrever nada. O QML
+    # relia, falhava de novo, disparava o helper de novo — laço infinito de
+    # processos, encontrado em teste.
+    if os.path.isfile(caminho):
+        return 0
+
+    dados = None
+    try:
+        dados = normalize_details_graphql(fetch_details_graphql(species_id),
+                                          species_id)
+    except Exception as exc:  # noqa: BLE001
+        log(f"GraphQL de detalhes falhou ({exc})")
+
+    if dados is None:
+        try:
+            dados = fetch_details_rest(species_id)
+        except Exception as exc:  # noqa: BLE001
+            log(f"REST de detalhes falhou ({exc})")
+
+    if dados is None:
+        # Nada de cache: a view mostra a falha com um botão de tentar de novo, e
+        # a próxima tentativa busca de verdade.
+        log(f"não foi possível obter os detalhes da espécie {species_id}")
+        return 1
+
+    write_json(caminho, dados)
+    log(f"detalhes de {dados['name']} em cache")
     return 0
 
 
@@ -1615,7 +1901,7 @@ def cmd_use(argv: list[str]) -> int:
 
 COMMANDS = {"hatch": cmd_hatch, "sprites": cmd_sprites,
             "index": cmd_index, "absorb": cmd_absorb,
-            "buy": cmd_buy, "use": cmd_use}
+            "buy": cmd_buy, "use": cmd_use, "details": cmd_details}
 
 
 def main(argv: list[str]) -> int:

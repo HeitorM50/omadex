@@ -184,6 +184,53 @@ function hasGraduatedLine(collection, baseSpeciesId) {
   return false
 }
 
+// Os indivíduos por trás de uma célula do Pokédex.
+//
+// Uma célula pode ser a mesma espécie de vários indivíduos, e o perfil precisa
+// de cada um: dois Corphish têm IVs, gênero e natureza diferentes. Só entram os
+// que REALMENTE alcançaram aquela forma — a mesma regra do dex, porque mostrar
+// o perfil de um Crawdaunt que nunca existiu seria descrever um bicho que a
+// pessoa não criou.
+//
+// Ordem: mais recente primeiro, como o histórico.
+function individualsOf(collection, speciesId) {
+  var all = entriesOf(collection)
+  var rows = []
+
+  for (var i = 0; i < all.length; i++) {
+    var entry = all[i]
+    var forms = speciesReached(entry)
+    var achou = false
+    for (var f = 0; f < forms.length; f++) if (forms[f].id === speciesId) achou = true
+    if (!achou) continue
+
+    var graduated = entry.graduatedAt !== null && entry.graduatedAt !== undefined
+    var released = entry.releasedAt !== null && entry.releasedAt !== undefined
+    rows.push({
+      companionId: entry.companionId,
+      speciesId: entry.speciesId,
+      name: entry.name || "",
+      rarity: entry.rarity || "common",
+      // A natureza é a única parte do perfil que vem gravada (o Mint a
+      // re-sorteia, então não pode sair de um seed). Entradas fechadas antes
+      // desse campo existir não têm — e inventar uma seria pior que "—".
+      nature: entry.nature || null,
+      shiny: visibleShiny(entry),
+      finalStage: entry.finalStage | 0,
+      lineLength: Array.isArray(entry.line) ? entry.line.length : 0,
+      hatchedAt: entry.hatchedAt || 0,
+      // Liberado NÃO é graduado: o nível dele é o que o estágio alcançado
+      // prova, não 100.
+      graduated: graduated && !released,
+      released: released,
+      current: !graduated && !released
+    })
+  }
+
+  rows.sort(function (a, b) { return b.hatchedAt - a.hatchedAt })
+  return rows
+}
+
 // ---- Formatação ----------------------------------------------------------
 
 // Data curta para a linha do catch log. Epoch em segundos.

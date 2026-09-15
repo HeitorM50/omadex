@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "OmaPkDex",
-    "description": "Animated sprite that evolves with your AI token usage, with a Pokédex, a catch log, Rare Candy from filled rate limits, and a token shop.",
+    "description": "Animated sprite that evolves with your AI token usage, with a Pokédex, a per-individual profile (level, nature, ability, IVs, stats, moves), a catch log, Rare Candy from filled rate limits, and a token shop.",
     "category": "AI",
     "aliases": [
       "omapkdex",

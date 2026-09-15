@@ -172,5 +172,35 @@ with tempfile.TemporaryDirectory() as d:
         else:
             os.environ['XDG_STATE_HOME'] = old
 
+print("\n--- a natureza viaja com a entrada ---")
+# A natureza é a ÚNICA parte do perfil que não pode sair de um seed: o Mint a
+# re-sorteia, então ela é mutável e tem de ser gravada. Sem isso, o perfil de um
+# indivíduo já graduado mostraria uma natureza inventada — ou nenhuma.
+eq("entrada nova carrega a natureza do companion",
+   ps.entry_from_companion(dict(companion(), nature='naughty'), now=1)['nature'],
+   'naughty')
+eq("companion sem natureza (v1) não inventa uma",
+   ps.entry_from_companion(companion(), now=1)['nature'], None)
+
+col2 = ps.empty_collection()
+c2 = dict(companion(hatched_at=2000), companionId='n1', nature='bold')
+ps.sync_open_entry(col2, c2, now=2000)
+eq("a entrada aberta nasce com a natureza", col2['entries'][0]['nature'], 'bold')
+
+# O Mint troca a natureza do companion; a entrada aberta tem de acompanhar,
+# senão o histórico descreve a natureza antiga do bicho que está vivo.
+c2['nature'] = 'jolly'
+eq("mudança de natureza é sincronizada", ps.sync_open_entry(col2, c2, now=2100), True)
+eq("e a entrada passa a mostrar a nova", col2['entries'][0]['nature'], 'jolly')
+eq("sem mudança, nada a fazer", ps.sync_open_entry(col2, c2, now=2200), False)
+
+# Uma entrada FECHADA guarda a natureza que o bicho tinha; o Mint de um
+# companion novo não pode reescrever o passado.
+col2['entries'][0]['graduatedAt'] = 2300
+c3 = dict(companion(hatched_at=3000), companionId='n2', nature='timid')
+ps.sync_open_entry(col2, c3, now=3000)
+eq("a graduada preserva a dela", col2['entries'][0]['nature'], 'jolly')
+eq("e a nova tem a sua", col2['entries'][1]['nature'], 'timid')
+
 print(f"\n{fails} FALHA(S)" if fails else "\nTodos os testes passaram")
 raise SystemExit(1 if fails else 0)

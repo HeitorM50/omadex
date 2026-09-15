@@ -93,12 +93,52 @@ Panel {
     open()
   }
 
+  // Perfil pedido de fora (IPC). O Loader da aba só existe depois da abertura,
+  // então o id espera aqui e é aplicado no onLoaded — a não ser que a aba já
+  // esteja montada, caso em que dá para mandar direto.
+  property int pendingProfile: 0
+
+  // Aplicar o pedido SÓ no onLoaded do Loader não funciona: se a aba já era a
+  // Pokédex, reabrir o painel não troca o sourceComponent, o Loader não
+  // recarrega e o onLoaded nunca dispara — o perfil ficava preso no pending e o
+  // comando parecia não fazer nada (acontece sempre na segunda vez seguida).
+  // Por isso esta função é chamada de todos os caminhos que podem ter acabado
+  // de deixar a view pronta.
+  function applyPendingProfile() {
+    if (pendingProfile <= 0 || tab !== 1) return
+    var view = viewLoader.item
+    if (!view || typeof view.openProfile !== "function") return
+    view.openProfile(pendingProfile)
+    pendingProfile = 0
+  }
+
+  function openProfileAt(speciesId) {
+    var id = Math.max(0, speciesId | 0)
+    if (id <= 0) return
+    pendingProfile = id
+    if (opened) {
+      setTab(1)
+      Qt.callLater(applyPendingProfile)
+      return
+    }
+    openAt(1)
+    Qt.callLater(applyPendingProfile)
+  }
+
+  onTabChanged: Qt.callLater(applyPendingProfile)
+
   // Reabrir sempre no companion: é o que a pessoa quer ver em 9 de 10 aberturas,
   // e voltar na aba de ontem seria surpresa sem ganho.
   onOpenedChanged: {
-    if (!opened) return
+    if (!opened) {
+      // Fechar descarta um pedido não aplicado: reabrir horas depois no perfil
+      // que alguém pediu e esqueceu seria surpresa.
+      pendingProfile = 0
+      return
+    }
     setTab(pendingTab >= 0 ? pendingTab : 0)
     pendingTab = -1
+    Qt.callLater(applyPendingProfile)
   }
 
   KeyboardPanel {
@@ -195,6 +235,7 @@ Panel {
           id: viewLoader
           width: parent.width
           active: true
+          onLoaded: root.applyPendingProfile()
           sourceComponent: root.tab === 0 ? companionComponent
                            : root.tab === 1 ? dexComponent
                            : root.tab === 2 ? logComponent
@@ -236,9 +277,50 @@ Panel {
       width: viewLoader.width
       collection: root.collection
       representativeSpeciesId: root.host ? root.host.representativeSpeciesId : 0
+      // Dados de espécie do perfil: cache que o helper escreve e o widget
+      // observa. O painel não toca disco nem rede, como o resto daqui.
+      details: root.host ? root.host.speciesDetails : null
+      detailsLoading: root.host ? root.host.detailsLoading === true : false
+      detailsFailed: root.host ? root.host.detailsFailed === true : false
+      liveCompanionId: root.host && root.host.companion
+                       ? String(root.host.companion.companionId || "") : ""
+      stage: root.host ? root.host.stage : 0
+      tokensIntoStage: root.host ? root.host.tokensIntoStage : 0
+      difficulty: root.host ? root.host.difficulty : 1.0
+      growthBoost: root.host ? root.host.growthBoost === true : false
       foreground: root.contentForeground
       fontFamily: root.fontFamily
       onPinRequested: function (speciesId) { root.pin(speciesId) }
+      onDetailsRequested: function (speciesId) {
+        if (root.host && typeof root.host.requestDetails === "function")
+          root.host.requestDetails(speciesId)
+      }
+      onDetailsRetryRequested: {
+        if (root.host && typeof root.host.fetchDetails === "function")
+          root.host.fetchDetails()
+      }
+    }
+  }
+
+  Component {
+    id: bagComponent
+    BagView {
+      width: viewLoader.width
+      host: root.host
+      foreground: root.contentForeground
+      fontFamily: root.fontFamily
+      onUseRequested: function (key) { root.use(key) }
+    }
+  }
+
+  Component {
+    id: shopComponent
+    ShopView {
+      width: viewLoader.width
+      host: root.host
+      foreground: root.contentForeground
+      fontFamily: root.fontFamily
+      onBuyRequested: function (key, tier) { root.buy(key, tier) }
     }
   }
 

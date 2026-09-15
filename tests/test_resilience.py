@@ -244,5 +244,24 @@ eq("o shiny bruto é preservado (ele É shiny)", e['shiny'], True)
 e2 = ps_m.entry_from_companion(dict(comp, companionId="d2"), now=1)
 eq("companion normal marca falso", e2['dittoDisguise'], False)
 
+print("\n--- escrita que falha não deixa temporário para trás ---")
+# write_atomic escreve num .tmp e troca. Quando a troca falha (disco cheio,
+# permissão, caminho ocupado por um diretório), o temporário ficava no disco —
+# quatro deles apareceram no cache depois de um teste. `finally` não serve:
+# quando a troca dá certo, o tmp já não existe.
+import tempfile as _tf
+ps_w = load_helper()
+_dir = _tf.mkdtemp(prefix='ptb-atomic-')
+_alvo = os.path.join(_dir, 'x.json')
+os.makedirs(_alvo)
+try:
+    ps_w.write_json(_alvo, {"a": 1})
+    eq("a escrita deveria ter falhado", True, False)
+except OSError:
+    eq("escrita impedida levanta", True, True)
+eq("e não sobra temporário",
+   [f for f in os.listdir(_dir) if '.tmp.' in f], [])
+shutil.rmtree(_dir, ignore_errors=True)
+
 print(f"\n{fails} FALHA(S)" if fails else "\nTodos os testes passaram")
 raise SystemExit(1 if fails else 0)

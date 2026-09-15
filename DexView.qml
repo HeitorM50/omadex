@@ -20,7 +20,34 @@ Column {
   property string fontFamily: Style.font.family
   property int maxHeight: Style.space(320)
 
+  // Repassados para o perfil do indivíduo. Ficam aqui porque a navegação é
+  // interna à aba: clicar numa célula abre o perfil no lugar da grade.
+  property var details: null
+  property bool detailsLoading: false
+  property bool detailsFailed: false
+  property string liveCompanionId: ""
+  property int stage: 0
+  property real tokensIntoStage: 0
+  property real difficulty: 1.0
+  property bool growthBoost: false
+
   signal pinRequested(int speciesId)
+  signal detailsRequested(int speciesId)
+  signal detailsRetryRequested()
+
+  // 0 = a grade. Maior que 0 = o perfil daquela espécie.
+  property int openSpeciesId: 0
+
+  function openProfile(speciesId) {
+    openSpeciesId = speciesId
+    hoveredCell = null
+    detailsRequested(speciesId)
+  }
+
+  function closeProfile() {
+    openSpeciesId = 0
+    detailsRequested(0)
+  }
 
   readonly property var allCells: Collection.dexEntries(collection)
   readonly property var stats: Collection.dexStats(collection)
@@ -46,22 +73,14 @@ Column {
     rarityFilter = rarityFilter === key ? "" : key
   }
 
-  // Clicar numa célula que tenha as duas artes troca entre normal e shiny.
-  property var shinyShown: ({})
-
   // Célula sob o cursor, para a linha de detalhe.
   property var hoveredCell: null
-
-  function toggleShiny(id) {
-    var next = Object.assign({}, shinyShown)
-    next[id] = !next[id]
-    shinyShown = next
-  }
 
   spacing: Style.space(8)
 
   Text {
     width: parent.width
+    visible: root.openSpeciesId === 0
     textFormat: Text.PlainText
     // O total NÃO acompanha o filtro: a contagem da raridade filtrada já está
     // no chip aceso, e um total que encolhe ao filtrar parece perda de coleção.
@@ -81,7 +100,7 @@ Column {
   // de empurrar o quarto chip para fora da borda.
   Flow {
     width: parent.width
-    visible: root.allCells.length > 0
+    visible: root.allCells.length > 0 && root.openSpeciesId === 0
     spacing: Style.space(4)
 
     Repeater {
@@ -131,7 +150,7 @@ Column {
 
   Text {
     width: parent.width
-    visible: root.allCells.length === 0
+    visible: root.allCells.length === 0 && root.openSpeciesId === 0
     textFormat: Text.PlainText
     text: "Your Pokédex fills itself: every species your companion reaches "
           + "lands here and stays, even after it graduates."
@@ -147,7 +166,7 @@ Column {
     // Cresce com o conteúdo até o teto, para uma coleção pequena não deixar um
     // buraco no painel nem uma grande estourá-lo.
     height: Math.min(root.maxHeight, contentHeight)
-    visible: root.cells.length > 0
+    visible: root.cells.length > 0 && root.openSpeciesId === 0
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     interactive: contentHeight > height
@@ -165,10 +184,12 @@ Column {
       width: grid.cellWidth
       height: grid.cellHeight
 
-      readonly property bool showShiny: modelData.shinySprite !== ""
-                                        && (root.shinyShown[modelData.id] === true
-                                            || modelData.sprite === "")
-      readonly property string art: showShiny ? modelData.shinySprite : modelData.sprite
+      // A grade mostra a arte normal; a shiny só quando é a única que existe
+      // (espécie que só foi possuída shiny). A troca de arte deixou de ser um
+      // clique na célula: o perfil mostra a arte do próprio indivíduo, que é
+      // mais correto que alternar a da espécie.
+      readonly property string art: modelData.sprite !== "" ? modelData.sprite
+                                                            : modelData.shinySprite
 
       Column {
         anchors.centerIn: parent
@@ -258,11 +279,16 @@ Column {
 
       // O ✨ marca a ESPÉCIE, não a arte em exibição: fica aceso mesmo quando a
       // célula está mostrando a versão normal.
+      // À direita, na altura do SPRITE — não no topo nem embaixo. No topo ele
+      // encostava no número da célula vizinha ("✨2" lia como se o brilho fosse
+      // do 2); embaixo, cobria o nome. Aqui a faixa está livre: o sprite tem
+      // 34px numa célula de ~80.
       Text {
         visible: cell.modelData.shiny
         anchors.top: parent.top
+        anchors.topMargin: Style.space(14)
         anchors.right: parent.right
-        anchors.margins: Style.space(2)
+        anchors.rightMargin: Style.space(2)
         textFormat: Text.PlainText
         text: "✨"
         font.family: root.fontFamily
@@ -279,9 +305,7 @@ Column {
       }
 
       TapHandler {
-        // Só faz sentido alternar quando existem as duas artes.
-        enabled: cell.modelData.shinySprite !== "" && cell.modelData.sprite !== ""
-        onTapped: root.toggleShiny(cell.modelData.id)
+        onTapped: root.openProfile(cell.modelData.id)
       }
 
 
@@ -292,7 +316,7 @@ Column {
   // pular de posição quando o cursor entra e sai.
   Item {
     width: parent.width
-    visible: root.cells.length > 0
+    visible: root.cells.length > 0 && root.openSpeciesId === 0
     implicitHeight: detail.implicitHeight
 
     Text {
@@ -302,18 +326,55 @@ Column {
       text: {
         var c = root.hoveredCell
         if (!c) return " "
+        // Separador simples e contagem só quando há mais de um: a linha tem
+        // ~53 caracteres de espaço em 320px, e com "  ·  " (cinco caracteres,
+        // cinco vezes) a dica do clique saía elidida.
         var bits = ["No. " + c.id, Balance.speciesLabel(c.name),
                     Balance.rarityLabel(c.rarity)]
-        bits.push(c.count + (c.count === 1 ? " raised" : " raised"))
+        if (c.count > 1) bits.push(c.count + " raised")
         if (c.shiny) bits.push("✨")
-        if (c.shinySprite !== "" && c.sprite !== "") bits.push("click to swap artwork")
-        bits.push(root.representativeSpeciesId === c.id ? "★ on the bar" : "☆ pin to the bar")
-        return bits.join("  ·  ")
+        bits.push("click to open")
+        return bits.join(" · ")
       }
       color: Qt.darker(root.foreground, 1.4)
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
       elide: Text.ElideRight
+    }
+  }
+
+  // O perfil substitui a grade em vez de abrir outro popout: um painel dentro
+  // do painel duplicaria a moldura e roubaria o foco do teclado.
+  Loader {
+    id: profileLoader
+    width: parent.width
+    active: root.openSpeciesId > 0
+    visible: active
+    sourceComponent: profileComponent
+  }
+
+  Component {
+    id: profileComponent
+
+    SpeciesProfileView {
+      width: profileLoader.width
+      collection: root.collection
+      speciesId: root.openSpeciesId
+      cell: Collection.dexCell(root.collection, root.openSpeciesId)
+      details: root.details
+      detailsLoading: root.detailsLoading
+      detailsFailed: root.detailsFailed
+      liveCompanionId: root.liveCompanionId
+      stage: root.stage
+      tokensIntoStage: root.tokensIntoStage
+      difficulty: root.difficulty
+      growthBoost: root.growthBoost
+      representativeSpeciesId: root.representativeSpeciesId
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onBackRequested: root.closeProfile()
+      onRetryRequested: root.detailsRetryRequested()
+      onPinRequested: function (speciesId) { root.pinRequested(speciesId) }
     }
   }
 }

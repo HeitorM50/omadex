@@ -39,6 +39,11 @@ BarWidget {
   readonly property string stateDir: stateBase + "/" + moduleName
   readonly property string usageDir: stateBase + "/agents/usage"
 
+  readonly property string cacheDir: {
+    var base = Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")
+    return base + "/omarchy/" + moduleName
+  }
+
   // Os ids dos coletores que o omarchy.agents distribui. Um record ausente
   // simplesmente não carrega — o widget não exige nenhum agente específico.
   readonly property var agentIds: ["claude", "codex", "fireworks"]
@@ -177,6 +182,16 @@ BarWidget {
     return form && form.sprite ? form.sprite : ""
   }
 
+  // Espécie da forma atual (não a base): é a célula do Pokédex que corresponde
+  // ao bicho que está sendo criado agora.
+  readonly property int currentSpeciesId: {
+    if (!hatched) return 0
+    var index = Math.min(stage, evolutionLine.length - 1)
+    if (index < 0) return 0
+    var form = evolutionLine[index]
+    return form && form.id ? form.id : 0
+  }
+
   readonly property string displayName: {
     if (!hatched) return "Egg"
     var index = Math.min(stage, evolutionLine.length - 1)
@@ -292,6 +307,77 @@ BarWidget {
     optionProc.running = true
   }
 
+  // ---- Detalhes de espécie, para o perfil do indivíduo.
+  //
+  // Isto é CACHE, não estado: quem escreve é `omapkdex-sync details`, e o widget
+  // só observa o arquivo — a mesma divisão do resto do plugin. O painel pede
+  // uma espécie por vez (só um perfil está aberto), então um FileView só, com o
+  // caminho seguindo a seleção, dá conta.
+  property int detailsSpeciesId: 0
+  property var speciesDetails: null
+  property bool detailsLoading: false
+  property bool detailsFailed: false
+
+  // Espécie para a qual o helper já foi disparado automaticamente. Sem isto, um
+  // helper que sai bem mas deixa o arquivo ilegível (disco cheio, permissão,
+  // JSON truncado) faz o FileView falhar, disparar o helper, falhar de novo —
+  // laço infinito de processos. Uma tentativa automática por espécie; o botão
+  // de tentar de novo é que zera isto.
+  property int detailsAttemptedFor: 0
+
+  function requestDetails(speciesId) {
+    var id = Math.max(0, speciesId | 0)
+    if (id === detailsSpeciesId) return
+    detailsSpeciesId = id
+    speciesDetails = null
+    detailsFailed = false
+    detailsAttemptedFor = 0
+    // Sem espécie não há nada carregando; com espécie, o FileView já foi
+    // reapontado e o resultado chega pelo onLoaded ou pelo onLoadFailed.
+    detailsLoading = id > 0
+  }
+
+  function fetchDetails() {
+    if (detailsSpeciesId <= 0) return
+    if (detailsProc.running) return
+    detailsLoading = true
+    detailsFailed = false
+    detailsAttemptedFor = detailsSpeciesId
+    detailsProc.speciesId = String(detailsSpeciesId)
+    detailsProc.running = true
+  }
+
+  // Disparo automático da primeira abertura de uma espécie — uma vez só.
+  function fetchDetailsOnce() {
+    if (detailsSpeciesId <= 0) return
+    if (detailsAttemptedFor === detailsSpeciesId) {
+      // Já tentamos e o arquivo continua ilegível: é falha, não "carregando".
+      detailsLoading = false
+      detailsFailed = true
+      return
+    }
+    fetchDetails()
+  }
+
+  function applyDetails(content) {
+    var text = String(content || "").trim()
+    if (!text) {
+      speciesDetails = null
+      return
+    }
+    try {
+      var parsed = JSON.parse(text)
+      speciesDetails = (parsed && typeof parsed === "object") ? parsed : null
+      detailsLoading = false
+      detailsFailed = false
+    } catch (e) {
+      console.warn(root.moduleName, "details inválido", e)
+      speciesDetails = null
+      detailsFailed = true
+      detailsLoading = false
+    }
+  }
+
   // Os FileViews observam os arquivos, mas uma compra é uma mudança que a pessoa
   // acabou de pedir: recarregar na hora faz o saldo cair na tela sem esperar o
   // evento de arquivo.
@@ -335,6 +421,14 @@ BarWidget {
     if (!panelLoader.item) return
     panelLoader.item.openAt(index)
   }
+  // Abre direto o perfil do companion vivo. Vale como atalho de verdade — um
+  // comando para ver os stats do bicho sem navegar — e é o que dá para dirigir
+  // a navegação de fora, o que a grade (que só responde a clique) não permite.
+  function openProfile() {
+    if (!panelLoader.item || currentSpeciesId <= 0) return
+    panelLoader.item.openProfileAt(currentSpeciesId)
+  }
+
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
 
   function injectPanel() {
@@ -376,6 +470,40 @@ BarWidget {
     printErrors: false
     onLoaded: root.applyCollection(text())
     onFileChanged: reload()
+  }
+
+  FileView {
+    id: detailsFile
+    path: root.detailsSpeciesId > 0
+          ? root.cacheDir + "/details/" + root.detailsSpeciesId + ".json"
+          : ""
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.applyDetails(text())
+    // Cache ainda não baixado: é o gatilho normal da primeira abertura de uma
+    // espécie, não um erro. Busca uma vez e o watchChanges traz o resultado.
+    onLoadFailed: root.fetchDetailsOnce()
+  }
+
+  Process {
+    id: detailsProc
+    property string speciesId: "0"
+    command: [root.pluginDir + "/bin/omapkdex-sync", "details", speciesId]
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function (code) {
+      root.detailsLoading = false
+      if (code !== 0) {
+        // Rede fora, ou espécie sem forma default. A view mostra a falha com um
+        // botão de tentar de novo; o helper não cacheia nada quando falha, então
+        // a próxima tentativa busca de verdade.
+        root.detailsFailed = true
+        console.warn(root.moduleName, "detalhes indisponíveis:", detailsProc.speciesId)
+        return
+      }
+      detailsFile.reload()
+    }
   }
 
   // Um watcher por record de uso, na forma do Agent.qml do omarchy.agents: um
@@ -530,9 +658,17 @@ BarWidget {
     function bag(): void { root.openTab(3) }
     function shop(): void { root.openTab(4) }
     function settings(): void { root.openTab(5) }
-  }
+    function profile(): void { root.openProfile() }
 
-  WidgetButton {  }
+    // Perfil de uma espécie qualquer do Pokédex, por número. Serve de atalho
+    // (uma tecla para a espécie favorita) e é o único jeito de dirigir a grade
+    // de fora — ela só responde a clique, então sem isto não há como exercitar
+    // a navegação sem um mouse.
+    function profileOf(speciesId: int): void {
+      if (!panelLoader.item) return
+      panelLoader.item.openProfileAt(speciesId)
+    }
+  }
 
   WidgetButton {
     id: button
