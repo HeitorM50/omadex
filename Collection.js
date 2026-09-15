@@ -64,6 +64,12 @@ function dexEntries(collection) {
         cell = byId[form.id] = {
           id: form.id,
           name: form.name || String(form.id),
+          // A raridade é da espécie BASE e vale para a linha inteira: uma
+          // espécie pertence a uma única linha evolutiva, então não há de onde
+          // vir outra. Fica fixada na primeira vez que a célula nasce — se duas
+          // entradas discordarem (estado editado à mão), o que importa é o
+          // valor ser estável entre releituras, não qual das duas ganha.
+          rarity: entry.rarity || "common",
           shiny: false,
           count: 0,
           sprite: "",
@@ -118,11 +124,25 @@ function catchLogRows(collection) {
 function dexStats(collection) {
   var cells = dexEntries(collection)
   var shiny = 0
-  for (var i = 0; i < cells.length; i++) if (cells[i].shiny) shiny++
+  // As quatro chaves existem sempre, mesmo em zero: o chip de uma raridade sem
+  // espécie precisa aparecer desabilitado, e não dá para desabilitar o que não
+  // veio na contagem.
+  var byRarity = { common: 0, uncommon: 0, rare: 0, legendary: 0 }
+
+  for (var i = 0; i < cells.length; i++) {
+    if (cells[i].shiny) shiny++
+    var key = cells[i].rarity
+    if (byRarity[key] === undefined) key = "common"
+    byRarity[key] += 1
+  }
+
   return {
     species: cells.length,
     shiny: shiny,
-    individuals: entriesOf(collection).length
+    individuals: entriesOf(collection).length,
+    // Em ESPÉCIES, não em indivíduos: é o que o número no chip quer dizer, e é
+    // a mesma escolha do original (o total de indivíduos já está no histórico).
+    byRarity: byRarity
   }
 }
 

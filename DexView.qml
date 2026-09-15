@@ -22,8 +22,29 @@ Column {
 
   signal pinRequested(int speciesId)
 
-  readonly property var cells: Collection.dexEntries(collection)
+  readonly property var allCells: Collection.dexEntries(collection)
   readonly property var stats: Collection.dexStats(collection)
+
+  // Filtro de raridade. Vazio = sem filtro. Só uma raridade por vez, como no
+  // original: combinar duas não responde nenhuma pergunta que a lista inteira
+  // já não responda.
+  property string rarityFilter: ""
+
+  readonly property var cells: {
+    if (!rarityFilter) return allCells
+    return allCells.filter(function (c) { return c.rarity === root.rarityFilter })
+  }
+
+  // Ordem dos chips: do mais raro para o mais comum, que é a ordem em que se
+  // procura na própria coleção.
+  readonly property var rarityOrder: ["legendary", "rare", "uncommon", "common"]
+
+  function toggleRarity(key) {
+    // Trocar o filtro muda quais células existem, e a linha de detalhe passaria
+    // a descrever uma que saiu da grade.
+    hoveredCell = null
+    rarityFilter = rarityFilter === key ? "" : key
+  }
 
   // Clicar numa célula que tenha as duas artes troca entre normal e shiny.
   property var shinyShown: ({})
@@ -42,6 +63,8 @@ Column {
   Text {
     width: parent.width
     textFormat: Text.PlainText
+    // O total NÃO acompanha o filtro: a contagem da raridade filtrada já está
+    // no chip aceso, e um total que encolhe ao filtrar parece perda de coleção.
     text: {
       if (root.stats.species === 0) return "No species yet"
       var bits = [root.stats.species + (root.stats.species === 1 ? " species" : " species")]
@@ -53,9 +76,62 @@ Column {
     font.pixelSize: Style.font.caption
   }
 
+  // Chips de raridade. `Flow` e não `Row`: os quatro rótulos em inglês somam
+  // perto da largura do painel, e um Flow quebra para uma segunda linha em vez
+  // de empurrar o quarto chip para fora da borda.
+  Flow {
+    width: parent.width
+    visible: root.allCells.length > 0
+    spacing: Style.space(4)
+
+    Repeater {
+      model: root.rarityOrder
+
+      Rectangle {
+        id: chip
+        required property string modelData
+
+        readonly property int count: root.stats.byRarity[modelData] || 0
+        readonly property bool active: root.rarityFilter === modelData
+        // Sem espécie daquela raridade não há nada para filtrar; o chip fica
+        // visível (a raridade existe no jogo) mas inerte.
+        readonly property bool enabled: count > 0
+
+        width: chipLabel.implicitWidth + Style.space(10)
+        height: Style.space(20)
+        radius: Style.space(4)
+        opacity: enabled ? 1 : 0.4
+        color: active
+               ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.16)
+               : (chipHover.hovered && enabled
+                  ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.07)
+                  : "transparent")
+
+        Behavior on color { ColorAnimation { duration: 120 } }
+
+        Text {
+          id: chipLabel
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          text: Balance.rarityLabel(chip.modelData) + " " + chip.count
+          color: chip.active ? root.foreground : Qt.darker(root.foreground, 1.5)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: chip.active
+        }
+
+        HoverHandler { id: chipHover; enabled: chip.enabled }
+        TapHandler {
+          enabled: chip.enabled
+          onTapped: root.toggleRarity(chip.modelData)
+        }
+      }
+    }
+  }
+
   Text {
     width: parent.width
-    visible: root.cells.length === 0
+    visible: root.allCells.length === 0
     textFormat: Text.PlainText
     text: "Your Pokédex fills itself: every species your companion reaches "
           + "lands here and stays, even after it graduates."
@@ -129,18 +205,6 @@ Column {
             font.pixelSize: Style.font.icon
           }
 
-          // O ✨ marca a espécie, não a arte em exibição: ele fica mesmo quando
-          // a célula está mostrando a versão normal.
-          Text {
-            visible: cell.modelData.shiny
-            anchors.top: parent.top
-            anchors.right: parent.right
-            textFormat: Text.PlainText
-            text: "✨"
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
           // Estrela do representativo: fixa esta espécie no bar. Aparece no
           // hover e na que já está fixada, para não poluir a grade inteira.
           Text {
@@ -177,6 +241,34 @@ Column {
         }
       }
 
+      // Número da Pokédex e ✨ ancorados na CÉLULA, não no sprite. O sprite tem
+      // 34px centralizados numa célula de ~80: ancorado nele, o número flutuaria
+      // a uns 20px da borda e pareceria solto no meio do nada. Na célula ele
+      // encosta no canto, que é onde o olho procura o número.
+      Text {
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.margins: Style.space(2)
+        textFormat: Text.PlainText
+        text: cell.modelData.id
+        color: Qt.darker(root.foreground, 1.7)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      // O ✨ marca a ESPÉCIE, não a arte em exibição: fica aceso mesmo quando a
+      // célula está mostrando a versão normal.
+      Text {
+        visible: cell.modelData.shiny
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: Style.space(2)
+        textFormat: Text.PlainText
+        text: "✨"
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
       HoverHandler {
         id: hover
         // Um tooltip numa grade de 4 colunas dentro de um popout de 330px é
@@ -210,7 +302,8 @@ Column {
       text: {
         var c = root.hoveredCell
         if (!c) return " "
-        var bits = ["No. " + c.id, Balance.speciesLabel(c.name)]
+        var bits = ["No. " + c.id, Balance.speciesLabel(c.name),
+                    Balance.rarityLabel(c.rarity)]
         bits.push(c.count + (c.count === 1 ? " raised" : " raised"))
         if (c.shiny) bits.push("✨")
         if (c.shinySprite !== "" && c.sprite !== "") bits.push("click to swap artwork")

@@ -131,7 +131,9 @@ eq('forma sem id é ignorada',
    C.dexEntries(col(entry({ line: [{ name: 'sem id' }, { id: 7, name: 'squirtle' }], finalStage: 1 })))
     .map(d => d.id), [7])
 eq('catch log de coleção nula', C.catchLogRows(null), [])
-eq('stats de coleção nula', C.dexStats(null), { species: 0, shiny: 0, individuals: 0 })
+eq('stats de coleção nula', C.dexStats(null),
+   { species: 0, shiny: 0, individuals: 0,
+     byRarity: { common: 0, uncommon: 0, rare: 0, legendary: 0 } })
 
 console.log('\n--- ownsSpecies: fixar no bar exige ter a espécie ---')
 const um = col(entry({ finalStage: 1 }))
@@ -184,6 +186,37 @@ eq('shiny sem disfarce', C.visibleShiny({ shiny: true }), true)
 eq('não shiny', C.visibleShiny({ shiny: false, dittoDisguise: true }), false)
 eq('vazio', C.visibleShiny({}), false)
 eq('nulo', C.visibleShiny(null), false)
+
+console.log('\n--- a célula carrega a raridade, para os chips de filtro ---')
+// A raridade é da espécie BASE e vale para a linha inteira: uma espécie
+// pertence a uma única linha evolutiva, então não há de onde vir outra.
+const raro = col(entry({ rarity: 'rare', finalStage: 1 }))
+eq('a base leva a raridade da entrada', C.dexEntries(raro)[0].rarity, 'rare')
+eq('a evolução herda a mesma', C.dexEntries(raro)[1].rarity, 'rare')
+eq('raridade ausente cai em comum',
+   C.dexEntries(col(entry({ rarity: undefined })))[0].rarity, 'common')
+// Duas entradas da mesma espécie não podem discordar; se discordarem (estado
+// escrito à mão), a primeira vista manda — o importante é ser estável, não
+// alternar a cada releitura.
+const discordante = col(entry({ companionId: 'a', rarity: 'rare' }),
+                        entry({ companionId: 'b', rarity: 'common' }))
+eq('a primeira raridade vista vence', C.dexEntries(discordante)[0].rarity, 'rare')
+
+console.log('\n--- contagem por raridade: é o número em cada chip ---')
+const mista = col(
+  entry({ companionId: 'a', rarity: 'common', finalStage: 1 }),        // 341, 342
+  entry({ companionId: 'b', speciesId: 25, rarity: 'rare',
+          line: [{ id: 25, name: 'pikachu' }] }),
+  entry({ companionId: 'c', speciesId: 144, rarity: 'legendary',
+          line: [{ id: 144, name: 'articuno' }] }))
+eq('conta ESPÉCIES, não indivíduos', C.dexStats(mista).byRarity,
+   { common: 2, uncommon: 0, rare: 1, legendary: 1 })
+eq('coleção vazia zera as quatro', C.dexStats(col()).byRarity,
+   { common: 0, uncommon: 0, rare: 0, legendary: 0 })
+eq('coleção nula também', C.dexStats(null).byRarity,
+   { common: 0, uncommon: 0, rare: 0, legendary: 0 })
+// A mesma espécie chocada duas vezes é UMA no chip.
+eq('espécie repetida conta uma vez', C.dexStats(repetida).byRarity.common, 1)
 
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTodos os testes passaram')
 process.exit(fails ? 1 : 0)
