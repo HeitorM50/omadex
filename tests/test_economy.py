@@ -97,6 +97,20 @@ class Sandbox:
         with open(f, 'w', encoding='utf-8') as h:
             json.dump(d, h)
 
+    def limpar_limites(self):
+        """Zera os limites de TODOS os records do sandbox.
+
+        Os records são cópias dos reais, e uma janela real cheia concede candy
+        junto com a que o teste montou — o resultado passava a depender do dia.
+        """
+        for nome in os.listdir(self.usage):
+            caminho = os.path.join(self.usage, nome)
+            with open(caminho, encoding='utf-8') as h:
+                d = json.load(h)
+            d['limits'] = []
+            with open(caminho, 'w', encoding='utf-8') as h:
+                json.dump(d, h)
+
     def put_record_limits(self, agent, limits):
         """Reescreve só os limites de um record, preservando o resto."""
         p = os.path.join(self.usage, f'{agent}.json')
@@ -156,6 +170,7 @@ eq("campos ausentes", ps_mod.available_tokens({}), 0)
 print("\n--- USAR CANDY NÃO PODE AUMENTAR A CARTEIRA ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, lifetimeTokens=600_000_000,
                  inventory={"rareCandy": 1})
@@ -172,6 +187,7 @@ with Sandbox() as sb:
 print("\n--- o XP da candy não é escalado pela dificuldade ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, inventory={"rareCandy": 2})
     ps.cmd_use(['rareCandy', '2.0'])
@@ -204,6 +220,7 @@ with Sandbox() as sb2:
 print("\n--- usar candy sem candy, ou sem companion, falha sem mutar ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, inventory={})
     eq("sem estoque devolve erro", ps.cmd_use(['rareCandy', '0.3']), 1)
@@ -219,6 +236,7 @@ with Sandbox() as sb:
 print("\n--- comprar sem saldo falha e não muta nada ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, lifetimeTokens=1_000_000)
     eq("recusa", ps.cmd_buy(['rareCandy', '1.0']), 1)
@@ -229,6 +247,7 @@ with Sandbox() as sb:
 print("\n--- comprar com saldo desconta e entrega ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, lifetimeTokens=2_000_000_000)
     eq("ok", ps.cmd_buy(['rareCandy', '1.0']), 0)
@@ -240,6 +259,7 @@ with Sandbox() as sb:
 print("\n--- Shiny Charm é passivo e de compra única ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, lifetimeTokens=10_000_000_000)
     eq("primeira compra ok", ps.cmd_buy(['shinyCharm', '1.0']), 0)
@@ -385,6 +405,7 @@ eq("resetsAt vazio não quebra",
 print("\n--- a primeira execução semeia sem pagar retroativo ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True)
     sb.put_record_limits('claude', [
@@ -400,6 +421,7 @@ with Sandbox() as sb:
 print("\n--- bater o limite depois de semeado concede ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, candySeeded=True)
     sb.put_record_limits('claude', [
@@ -416,6 +438,7 @@ with Sandbox() as sb:
 print("\n--- sessão dá 1, e rearma quando cai abaixo de 100% ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, candySeeded=True)
     sb.put_record_limits('codex', [
@@ -434,6 +457,7 @@ with Sandbox() as sb:
 print("\n--- percent vem em 0..1, não em 0..100 ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, candySeeded=True)
     sb.put_record_limits('claude', [
@@ -520,6 +544,7 @@ eq("intervalo de um dia", ps_mod.burn_rate(60_000, 86_400), 41)
 print("\n--- o absorb registra a taxa e o instante ---")
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, candySeeded=True)
     ps.cmd_absorb(['0.3'])                     # marca a régua
@@ -536,6 +561,7 @@ print("\n--- a taxa mede o intervalo entre GANHOS, não entre absorções ---")
 # e deixaria o humor travado em "no foco".
 with Sandbox() as sb:
     ps = load_helper()
+    sb.limpar_limites()
     sb.put_companion()
     sb.put_state(hatched=True, candySeeded=True)
     ps.cmd_absorb(['0.3'])                    # marca a régua, sem ganho
