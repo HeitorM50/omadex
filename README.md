@@ -45,8 +45,61 @@
 
 ```bash
 omarchy plugin add https://github.com/HeitorM50/omapkdex.git --enable
-omarchy bar add io.github.heitorm50.omapkdex --section right
 ```
+
+`--enable` asks where to place it in the bar. To move it later:
+
+```bash
+omarchy plugin enable io.github.heitorm50.omapkdex --section right
+```
+
+## Update
+
+```bash
+omarchy plugin update io.github.heitorm50.omapkdex
+omarchy restart shell
+```
+
+**The restart is not optional.** `omarchy plugin update` ends with
+`rescanPlugins`, which is enough for the helper and the JSON, but the QML engine
+keeps a component cache that neither the hot-reload nor a rescan clears
+reliably — the panel would keep running the old code with no warning at all.
+
+Your Pokémon, your Pokédex and your history survive an update untouched: state
+written by an older version is read as-is, and fields added since (the recorded
+difficulty, an individual's nature) are treated as absent rather than
+back-filled with a guess.
+
+<details>
+<summary><b>If you installed it before it was called OmaPkDex</b></summary>
+
+The plugin was briefly `io.github.heitorm50.poketokenbar` and then
+`io.github.heitorm50.omadex`. A plugin id is the folder name *and* the key the
+bar uses, so pulling a new manifest id into an old folder leaves the bar
+pointing at a widget that no longer exists — it vanishes with no error.
+
+Reinstalling under the new id and carrying your save across is the fix. Check
+which one you have first:
+
+```bash
+ls -d ~/.config/omarchy/plugins/io.github.heitorm50.*
+```
+
+If it is not `...omapkdex`, then — with `<old>` being the folder you just saw:
+
+```bash
+mv ~/.local/state/omarchy/<old> ~/.local/state/omarchy/io.github.heitorm50.omapkdex
+mv ~/.cache/omarchy/<old>       ~/.cache/omarchy/io.github.heitorm50.omapkdex
+omarchy plugin remove <old> --yes
+omarchy plugin add https://github.com/HeitorM50/omapkdex.git --enable
+omarchy restart shell
+```
+
+The state directory is keyed by the plugin id, which is why it moves: your
+tokens, your Pokédex and your history live there, and a fresh id would start
+you on an egg.
+
+</details>
 
 <details>
 <summary><b>Dependencies, and how to remove it</b></summary>
@@ -58,7 +111,6 @@ omarchy bar add io.github.heitorm50.omapkdex --section right
 - **`omarchy.agents`** enabled, with recorded usage. See the note above.
 
 ```bash
-omarchy bar remove io.github.heitorm50.omapkdex
 omarchy plugin remove io.github.heitorm50.omapkdex
 ```
 
@@ -71,7 +123,8 @@ rm -rf ~/.cache/omarchy/io.github.heitorm50.omapkdex
 ```
 
 OmaPkDex writes nowhere else. The only change it makes to your Omarchy config is
-its own widget entry in `shell.json`, which `omarchy bar remove` takes out.
+its own widget entry in `shell.json`, which `omarchy plugin remove` takes out
+along with the folder.
 
 </details>
 
