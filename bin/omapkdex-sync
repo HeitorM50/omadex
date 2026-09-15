@@ -661,8 +661,8 @@ def cmd_absorb(argv: list[str]) -> int:
         if graduated:
             touched |= close_open_entry(collection, now, total_forms - 1)
             nome = (companion or {}).get("name", "").replace("-", " ").title()
-            notify("🎓 Graduou!", f"{nome} entrou de vez no Pokédex."
-                                  " Um ovo novo está a caminho.")
+            notify("🎓 Graduated!", f"{nome} is in the Pokédex for good."
+                                    " A fresh egg is on the way.")
         elif state["hatched"]:
             touched |= record_stage(collection, state["stage"])
 
@@ -695,9 +695,9 @@ def cmd_absorb(argv: list[str]) -> int:
                     # escondia porque a entrada constava disfarçada.
                     entry["dittoRevealed"] = True
                     save_collection(collection)
-                notify("🎭 Era um Ditto!",
-                       "O seu companion nunca foi o que dizia ser."
-                       + (" E é shiny." if revealed.get("shiny") else ""))
+                notify("🎭 It was a Ditto!",
+                       "Your companion was never what it claimed to be."
+                       + (" And it is shiny." if revealed.get("shiny") else ""))
 
         if hatch_requested:
             # cmd_hatch escreve o companion novo e abre a entrada dele, já com a
@@ -712,7 +712,7 @@ def cmd_absorb(argv: list[str]) -> int:
     for grant in grants:
         # A notificação diz QUAL janela, como no original — sem isso a pessoa
         # ganha uma candy e não sabe por quê.
-        notify("Rare Candy!", f"{grant['count']}x por bater {grant['name']}")
+        notify("Rare Candy!", f"{grant['count']}x for filling {grant['name']}")
 
     log(f"absorveu {gained} tokens; lifetime={state['lifetimeTokens']} "
         f"stage={state['stage']} hatched={state['hatched']} "
@@ -1287,10 +1287,10 @@ def cmd_hatch(argv: list[str]) -> int:
 
     nome = entry["name"].replace("-", " ").title()
     if shiny:
-        notify("✨ Shiny!", f"Um {nome} shiny chocou — é 1 em "
+        notify("✨ Shiny!", f"A shiny {nome} hatched — that is 1 in "
                            f"{shiny_denominator(state.get('inventory'))}.")
     else:
-        notify("Chocou!", f"{nome} ({rarity_for(entry)})")
+        notify("Hatched!", f"{nome} ({rarity_for(entry)})")
 
     log(f"chocou {entry['name']} ({rarity_for(entry)})"
         f"{' SHINY' if shiny else ''}, linha de {len(line)} forma(s)")

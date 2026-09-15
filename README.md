@@ -4,10 +4,7 @@ A creature in your Omarchy bar that hatches and evolves as you burn AI coding
 tokens. A Pokédex, a catch log, Rare Candy for filling rate limits, and a shop
 that spends the tokens you have already used.
 
-```
-🥚          an egg, incubating
-🦀 →        the animated Gen-V sprite once it hatches
-```
+![The companion tab](docs/screenshots/companion.png)
 
 ## Requires `omarchy.agents`
 
@@ -112,6 +109,8 @@ Turn on `seedFromExisting` to let it count.
 The popout has five tabs: **Companion**, **Pokédex**, **History**, **Bag**, and
 **Shop**.
 
+![The Pokédex tab](docs/screenshots/pokedex.png)
+
 The Pokédex is **not a file** — it is projected from the catch log. Two
 persisted collections would drift out of sync; one cannot.
 
@@ -119,6 +118,11 @@ A species enters the dex the moment your companion reaches it, and stays
 forever. The dex records species **reached**, not the whole line: a creature
 that graduated without evolving does not grant its evolution. That is the
 difference between collecting what you raised and what you could have raised.
+
+The History tab keeps the individuals rather than the species — every creature
+you raised, newest first, with the current one pinned at the top.
+
+![The History tab](docs/screenshots/history.png)
 
 ### Shiny
 
@@ -137,6 +141,8 @@ Filling a rate-limit window pays **Rare Candy** — 5 for a weekly cap, 1 for a
 session cap. Using one injects 100M of growth. The moment you hit the ceiling
 becomes the moment your creature grows.
 
+![The Bag tab](docs/screenshots/bag.png)
+
 | | Price | Effect |
 |---|---|---|
 | Mint | 100M | rerolls its nature |
@@ -145,6 +151,8 @@ becomes the moment your creature grows.
 | Uncommon Egg | 2.5B | guarantees Uncommon or better |
 | Shiny Charm | 3B | shiny odds 1/64 → 1/48, forever |
 | Rare Egg | 4B | guarantees Rare or better |
+
+![The Shop tab](docs/screenshots/shop.png)
 
 Two numbers that look arbitrary and are not. Rare Candy costs **5× what it
 delivers** because tokens serve as both the growth meter *and* the wallet;

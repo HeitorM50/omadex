@@ -1,11 +1,16 @@
 # Third-party notices
 
-## Nothing is bundled
+## Nothing third-party is bundled
 
-This repository contains no third-party code, data, or images. Every species,
-evolution chain, and sprite is fetched over the network the first time it is
-needed and cached under `~/.cache/omarchy/io.github.heitorm50.omapkdex/`. No API
-key or account is required.
+This repository contains no third-party code and no third-party data. Every
+species, evolution chain, and sprite is fetched over the network the first time
+it is needed and cached under
+`~/.cache/omarchy/io.github.heitorm50.omapkdex/`. No API key or account is
+required.
+
+The screenshots under `docs/screenshots/` and `preview.png` are captures of this
+plugin's own interface. Some of them show sprite artwork rendered inside it,
+which remains the property of the rights holders named below.
 
 ## PokéAPI
 
