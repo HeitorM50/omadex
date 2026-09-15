@@ -581,5 +581,115 @@ with Sandbox() as sb:
     eq("e não mexe na taxa", s3['burnRate'], s2['burnRate'])
 
 
+print("\n--- mudar a dificuldade reescala o progresso, e não evolui de graça ---")
+# O bug: `tokensIntoStage` é um número absoluto de tokens e o limiar é
+# calculado na hora. Baixar a dificuldade encolhe o limiar POR BAIXO do
+# progresso já acumulado; o original reescala (rescaleBankedGrowth).
+#
+# Todo caso aqui fixa a régua do lastSeen com um absorb de aquecimento antes de
+# montar o estado. Zerar lastSeen faria o record REAL inteiro entrar como delta
+# de centenas de milhões, que gradua o bicho e mascara o que se está medindo.
+
+
+def regua(sb, ps):
+    """Absorb de aquecimento: marca lastSeen nos totais reais. Devolve-os."""
+    ps.cmd_absorb(['1.0'])
+    return sb.read('state.json')['lastSeen']
+
+
+eq("o limiar realmente encolhe",
+   (ps_mod.phase_threshold('common', 2, 0, 1.0),
+    ps_mod.phase_threshold('common', 2, 0, 0.3)),
+   (250_000_000, 75_000_000))
+
+with Sandbox() as sb:
+    ps = load_helper()
+    stub_network(ps)
+    seen = regua(sb, ps)
+    # 240M de 250M = 96% do estágio, na dificuldade 1.0.
+    sb.put_state(hatched=True, stage=0, tokensIntoStage=240_000_000,
+                 difficulty=1.0, lastSeen=seen)
+    sb.put_companion()
+    sb.bump('claude', 1_000_000)
+    ps.cmd_absorb(['0.3'])
+    s = sb.read('state.json')
+    # Sem o reescalonamento, 240M contra limiares de 75M e 150M cobre a linha
+    # inteira: o bicho não evoluía de graça, ele GRADUAVA de graça.
+    eq("não graduou só por trocar a dificuldade", s['graduations'], 0)
+    eq("nem evoluiu", s['stage'], 0)
+    # 96% de 75M = 72M, mais o 1M de delta novo.
+    eq("o progresso foi reescalado", s['tokensIntoStage'], 73_000_000)
+    eq("e a dificuldade ficou gravada", s['difficulty'], 0.3)
+
+with Sandbox() as sb:
+    ps = load_helper()
+    stub_network(ps)
+    seen = regua(sb, ps)
+    # Subir a dificuldade não pode roubar progresso: mesma fração, limiar maior.
+    sb.put_state(hatched=True, stage=0, tokensIntoStage=37_500_000,   # 50% de 75M
+                 difficulty=0.3, lastSeen=seen)
+    sb.put_companion()
+    ps.cmd_absorb(['1.0'])
+    s = sb.read('state.json')
+    eq("subir a dificuldade mantém os 50%", s['tokensIntoStage'], 125_000_000)
+    eq("e nada de estágio", s['stage'], 0)
+
+with Sandbox() as sb:
+    ps = load_helper()
+    stub_network(ps)
+    seen = regua(sb, ps)
+    # Arredondar NUNCA pode completar um estágio: a um token do limiar antigo,
+    # a proporção cairia exatamente sobre o limiar novo.
+    sb.put_state(hatched=True, stage=0,
+                 tokensIntoStage=ps.phase_threshold('common', 2, 0, 2.0) - 1,
+                 difficulty=2.0, lastSeen=seen)
+    sb.put_companion()
+    ps.cmd_absorb(['0.1'])
+    s = sb.read('state.json')
+    eq("fica um token abaixo do novo limiar", s['tokensIntoStage'],
+       ps.phase_threshold('common', 2, 0, 0.1) - 1)
+    eq("logo não evoluiu", s['stage'], 0)
+
+with Sandbox() as sb:
+    ps = load_helper()
+    stub_network(ps)
+    seen = regua(sb, ps)
+    # Estado escrito antes deste campo existir: a dificuldade ausente adota a
+    # atual SEM reescalar. Tratá-la como o default 1.0 multiplicaria por 0.3 o
+    # progresso de quem já jogava em 0.3.
+    sb.put_state(hatched=True, stage=0, tokensIntoStage=50_000_000,
+                 lastSeen=seen)
+    sb.put_companion()
+    ps.cmd_absorb(['0.3'])
+    s = sb.read('state.json')
+    eq("campo ausente não reescala nada", s['tokensIntoStage'], 50_000_000)
+    eq("só grava a dificuldade atual", s['difficulty'], 0.3)
+
+with Sandbox() as sb:
+    ps = load_helper()
+    stub_network(ps)
+    seen = regua(sb, ps)
+    # Sem delta de token nenhum a troca ainda tem de reescalar: senão a barra
+    # mostra uma fração errada até o próximo ganho chegar.
+    sb.put_state(hatched=True, stage=0, tokensIntoStage=100_000_000,
+                 difficulty=1.0, lastSeen=seen)
+    sb.put_companion()
+    ps.cmd_absorb(['0.3'])
+    s = sb.read('state.json')
+    eq("reescala mesmo sem ganho", s['tokensIntoStage'], 30_000_000)
+    eq("e não evolui sem ganho", s['stage'], 0)
+
+with Sandbox() as sb:
+    ps = load_helper()
+    stub_network(ps)
+    seen = regua(sb, ps)
+    # O ovo tem o próprio limiar, e também é reescalado.
+    sb.put_state(hatched=False, tokensIntoStage=4_000_000,   # 80% de 5M
+                 difficulty=1.0, lastSeen=seen)
+    ps.cmd_absorb(['0.5'])
+    s = sb.read('state.json')
+    eq("o ovo mantém os 80%", s['tokensIntoStage'], 2_000_000)   # 80% de 2.5M
+    eq("e não chocou", s['hatched'], False)
+
 print(f"\n{fails} FALHA(S)" if fails else "\nTodos os testes passaram")
 raise SystemExit(1 if fails else 0)

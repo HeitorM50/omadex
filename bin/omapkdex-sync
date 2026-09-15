@@ -90,11 +90,21 @@ def notify(title: str, body: str = "") -> None:
 def write_atomic(path: str, payload: bytes) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "wb") as handle:
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # A troca falhando deixava o temporário para trás — quatro deles
+        # apareceram no cache depois de um teste de escrita impedida. O
+        # `finally` não serve: quando a troca dá certo, o tmp já não existe.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def write_json(path: str, data: object) -> None:
@@ -480,6 +490,9 @@ DEFAULT_STATE = {
     "eggTier": None,
     "burnRate": 0,
     "lastGainAt": 0,
+    # A última dificuldade com que se absorveu. `None` é estado gravado antes
+    # deste campo existir — ver rescale_progress.
+    "difficulty": None,
 }
 
 
@@ -555,6 +568,19 @@ def cmd_absorb(argv: list[str]) -> int:
         line = (companion or {}).get("evolutionLine") or []
         total_forms = max(1, len(line))
         boost = growth_boost(load_collection(), companion)
+
+        # Antes de acumular qualquer token: se a dificuldade mudou desde a
+        # última absorção, o progresso guardado está em outra escala.
+        #
+        # `None` é estado anterior a este campo: adota a dificuldade atual SEM
+        # reescalar. Tratar a ausência como o default 1.0 multiplicaria por 0.3
+        # o progresso de quem já jogava em 0.3 — quem mais sofreria seria
+        # justamente quem instalou antes.
+        anterior = state.get("difficulty")
+        if isinstance(anterior, (int, float)) and float(anterior) != difficulty:
+            rescale_progress(state, rarity, total_forms, float(anterior),
+                             difficulty, boost)
+        state["difficulty"] = difficulty
 
         seen = state["lastSeen"]
         gained = 0
@@ -896,6 +922,45 @@ def advance_stages(state: dict, rarity: str, total_forms: int,
     state["stage"] = stage
     state["tokensIntoStage"] = into
     return False
+
+
+def rescale_progress(state: dict, rarity: str, total_forms: int,
+                     old: float, new: float, growth_multiplier: int = 1) -> None:
+    """Reescala o progresso acumulado quando a dificuldade muda.
+
+    A dificuldade não mora no state: vem do shell.json, e muda por fora — pela
+    tela de settings do Omarchy ou pela aba de settings do painel. Como
+    `tokensIntoStage` é um número ABSOLUTO de tokens e o limiar é derivado na
+    hora, baixar a dificuldade encolhe o limiar por baixo do progresso já
+    acumulado e o companion gradua de graça (medido: 240M contra limiares de
+    75M+150M cobre a linha inteira de uma vez); subir a dificuldade rouba
+    progresso em silêncio.
+
+    O que se preserva é a FRAÇÃO do estágio, que é o que a pessoa vê na barra.
+    É o mesmo que o original faz em CompanionStore.rescaleBankedGrowth.
+    """
+    into = int(state.get("tokensIntoStage") or 0)
+    if into <= 0:
+        return
+
+    if state.get("hatched"):
+        stage = int(state.get("stage") or 0)
+        antigo = phase_threshold(rarity, total_forms, stage, old, growth_multiplier)
+        novo = phase_threshold(rarity, total_forms, stage, new, growth_multiplier)
+    else:
+        antigo = hatch_threshold(old)
+        novo = hatch_threshold(new)
+
+    if antigo == novo or antigo <= 0:
+        return
+
+    escalado = int(into * novo / antigo)
+    # Arredondar não pode completar um estágio que estava incompleto: a um token
+    # do limiar antigo, a proporção cai exatamente sobre o limiar novo, e o
+    # reescalonamento entregaria a evolução que ele estava justamente evitando.
+    if into < antigo:
+        escalado = min(novo - 1, escalado)
+    state["tokensIntoStage"] = max(0, escalado)
 
 
 def growth_boost(collection: dict, companion: dict | None) -> int:

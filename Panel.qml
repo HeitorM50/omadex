@@ -40,7 +40,11 @@ Panel {
     { key: "dex", label: "Pokédex" },
     { key: "log", label: "History" },
     { key: "bag", label: "Bag" },
-    { key: "shop", label: "Shop" }
+    { key: "shop", label: "Shop" },
+    // Glifo, não palavra: os cinco rótulos já ocupam quase a largura do painel,
+    // e "Settings" empurraria o quinto para fora. Uma engrenagem é a convenção
+    // mais reconhecível que existe para isso.
+    { key: "settings", label: "󰒓" }
   ]
   property int tab: 0
 
@@ -123,7 +127,7 @@ Panel {
       onTextKey: function (t) {
         if (t === "r" || t === "R") root.refresh()
         else if (t === "a" || t === "A") root.openAgents()
-        else if (t >= "1" && t <= "5") root.setTab(parseInt(t, 10) - 1)
+        else if (t >= "1" && t <= "6") root.setTab(parseInt(t, 10) - 1)
       }
 
       Column {
@@ -194,7 +198,8 @@ Panel {
           sourceComponent: root.tab === 0 ? companionComponent
                            : root.tab === 1 ? dexComponent
                            : root.tab === 2 ? logComponent
-                           : root.tab === 3 ? bagComponent : shopComponent
+                           : root.tab === 3 ? bagComponent
+                           : root.tab === 4 ? shopComponent : settingsComponent
         }
 
         Text {
@@ -202,7 +207,7 @@ Panel {
           textFormat: Text.PlainText
           text: root.tab === 0
                 ? "←/→ switch tab · r re-check · a open details · Esc close"
-                : "←/→ switch tab · 1-5 jump · Esc close"
+                : "←/→ switch tab · 1-6 jump · Esc close"
           color: Qt.darker(root.contentForeground, 1.8)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -238,24 +243,17 @@ Panel {
   }
 
   Component {
-    id: bagComponent
-    BagView {
+    id: settingsComponent
+    SettingsView {
       width: viewLoader.width
       host: root.host
+      bar: root.bar
       foreground: root.contentForeground
       fontFamily: root.fontFamily
-      onUseRequested: function (key) { root.use(key) }
-    }
-  }
-
-  Component {
-    id: shopComponent
-    ShopView {
-      width: viewLoader.width
-      host: root.host
-      foreground: root.contentForeground
-      fontFamily: root.fontFamily
-      onBuyRequested: function (key, tier) { root.buy(key, tier) }
+      onOptionRequested: function (key, value) {
+        if (root.host && typeof root.host.setOption === "function")
+          root.host.setOption(key, value)
+      }
     }
   }
 

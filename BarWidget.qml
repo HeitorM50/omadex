@@ -269,9 +269,27 @@ BarWidget {
   // (shell.json) e não no state.json — é o mesmo critério do original, que as
   // guarda em UserDefaults e não no save.
   function pin(speciesId) {
-    if (pinProc.running) return
-    pinProc.value = String(Math.max(0, speciesId | 0))
-    pinProc.running = true
+    setOption("representativeSpeciesId", Math.max(0, speciesId | 0))
+  }
+
+  // Fila de escritas de setting. Um `Process` não roda duas vezes ao mesmo
+  // tempo, e simplesmente descartar a segunda escrita faria o slider mostrar um
+  // valor que não foi gravado — na releitura do shell.json ele voltaria sozinho
+  // ao antigo, sem nada na tela explicando por quê.
+  property var optionQueue: []
+
+  function setOption(key, value) {
+    var next = optionQueue.slice()
+    next.push({ key: key, value: String(value) })
+    optionQueue = next
+    pumpOptions()
+  }
+
+  function pumpOptions() {
+    if (optionProc.running || optionQueue.length === 0) return
+    optionProc.key = optionQueue[0].key
+    optionProc.value = optionQueue[0].value
+    optionProc.running = true
   }
 
   // Os FileViews observam os arquivos, mas uma compra é uma mudança que a pessoa
@@ -445,15 +463,20 @@ BarWidget {
     }
   }
 
+  // `--json` preserva o tipo: sem ele, 0.3 chegaria ao shell.json como a string
+  // "0.3" e o `clampDifficulty` receberia texto.
   Process {
-    id: pinProc
+    id: optionProc
+    property string key: ""
     property string value: "0"
-    command: ["omarchy", "bar", "set", root.moduleName,
-              "representativeSpeciesId", value, "--json"]
+    command: ["omarchy", "bar", "set", root.moduleName, key, value, "--json"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function (code) {
-      if (code !== 0) console.warn(root.moduleName, "não deu para fixar a espécie")
+      if (code !== 0)
+        console.warn(root.moduleName, "não deu para gravar a setting", optionProc.key)
+      root.optionQueue = root.optionQueue.slice(1)
+      root.pumpOptions()
     }
   }
 
@@ -506,7 +529,10 @@ BarWidget {
     function log(): void { root.openTab(2) }
     function bag(): void { root.openTab(3) }
     function shop(): void { root.openTab(4) }
+    function settings(): void { root.openTab(5) }
   }
+
+  WidgetButton {  }
 
   WidgetButton {
     id: button

@@ -43,7 +43,7 @@
         "max": 2.0,
         "step": 0.1,
         "defaultValue": 0.3,
-        "description": "Multiplies evolution thresholds. Below 1 grows faster. The 0.3 default is tuned for ~50M tokens/day; use 1.0 for the original PokeTokenBar balance (~253M/day)."
+        "description": "Multiplies evolution thresholds. Below 1 grows faster. Changing it rescales the progress you already banked, so nothing evolves or graduates for free. The 0.3 default is tuned for ~50M tokens/day; use 1.0 for the original PokeTokenBar balance (~253M/day)."
       },
       {
         "key": "shopDifficulty",
@@ -53,7 +53,7 @@
         "max": 2.0,
         "step": 0.1,
         "defaultValue": 1.0,
-        "description": "Multiplies shop prices, independent of growth difficulty. Below 1 is cheaper."
+        "description": "Multiplies shop prices, independent of growth difficulty. Below 1 is cheaper. Both have sliders in the Settings tab."
       },
       {
         "key": "spriteSize",
