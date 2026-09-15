@@ -97,6 +97,48 @@ estágio está. O `Balance.barTooltip` garante que a fixada nunca apareça na me
 linha que um estágio, e a estrela sobre o sprite diz no próprio bar que aquela
 não é a espécie em criação. Pista que depende de hover não serve aqui.
 
+### 6.1. A dificuldade é reescalada, nunca aplicada crua
+
+`tokensIntoStage` é um número ABSOLUTO de tokens e o limiar é derivado da
+dificuldade na hora. Então a dificuldade tem de ser lembrada: `state.difficulty`
+guarda a última com que se absorveu, e `cmd_absorb` reescala o progresso antes
+de acumular qualquer coisa quando ela muda.
+
+Sem isso — e foi assim até esta versão — baixar a dificuldade encolhia o limiar
+por baixo do progresso acumulado e o companion **graduava de graça**: medido,
+240M de progresso contra limiares de 75M+150M cobre a linha inteira de uma vez.
+Subir a dificuldade roubava progresso em silêncio.
+
+Duas regras que o teste trava e que parecem detalhe:
+
+- **Arredondar não pode completar um estágio.** A um token do limiar antigo, a
+  proporção cai exatamente sobre o novo, e o reescalonamento entregaria a
+  evolução que ele existe para evitar.
+- **`difficulty` ausente adota a atual sem reescalar.** Tratar a ausência como o
+  default 1.0 multiplicaria por 0.3 o progresso de quem já jogava em 0.3 — quem
+  mais sofreria seria justamente quem instalou antes.
+
+### 6.2. O perfil do indivíduo é projeção, não estado
+
+IVs, gênero e habilidade são sorteados de um PRNG semeado pelo `companionId`
+(`Profile.js`), e o nível é derivado da fração de crescimento. **Nada disso é
+persistido**, então os indivíduos que já estavam no histórico ganharam perfil
+retroativo, sem migração e sem backfill.
+
+O preço é que o seed tem de ser estável para sempre: se `seedFor` mudar, os IVs
+do bicho de alguém mudam sozinhos. Ela é FNV-1a, que é especificada — não o hash
+da linguagem.
+
+A **natureza é a exceção** e por isso é gravada na entrada: o Mint a re-sorteia,
+então ela é mutável e não pode sair de um seed. Entradas fechadas antes do campo
+existir mostram "—", e é assim que deve ser: inventar uma natureza que aquele
+indivíduo nunca teve é pior que não mostrar nenhuma.
+
+Os dados de espécie (stats base, habilidades, learnset, descrição) vêm do
+`omapkdex-sync details`, que cacheia em `~/.cache/omarchy/<módulo>/details/`.
+Sem eles o perfil aparece pela metade — nível, natureza e IVs não dependem de
+rede — em vez de estourar.
+
 ### 7. O XP da candy não entra na carteira
 
 A carteira é `lifetimeTokens − spentTokens`. Somar o XP da Rare Candy ao
@@ -165,8 +207,40 @@ Por isso a entrada da coleção carrega `dittoDisguise` e `dittoRevealed` ao lad
 do `shiny` bruto: o bicho **é** shiny, e quem decide se pode aparecer é a
 exibição.
 
+## Um laço fácil de criar: FileView que falha e Process que "sai bem"
+
+`onLoadFailed` disparar o helper é o gatilho normal da primeira abertura de uma
+espécie. Mas se o helper sair com 0 sem deixar o arquivo legível, o FileView
+recarrega, falha, dispara o helper de novo — **laço infinito de processos**.
+
+Aconteceu de verdade: `cmd_details` usava `os.path.exists` para o cache, e um
+diretório com o nome do arquivo satisfazia a checagem. Dois consertos, e os dois
+são necessários: `os.path.isfile` no helper, e `fetchDetailsOnce` no widget, que
+permite **uma** tentativa automática por espécie (o botão de tentar de novo é
+que rearma).
+
+## Navegação pedida de fora: o Loader não recarrega se a aba não muda
+
+`openProfileAt` guarda o pedido em `pendingProfile` e o aplica no `onLoaded` do
+Loader da aba. Só que reabrir o painel na aba em que ele já estava **não** troca
+o `sourceComponent`, então o Loader não recarrega e o `onLoaded` nunca dispara —
+o pedido ficava preso e o comando parecia não fazer nada (sempre na segunda vez
+seguida). Por isso `applyPendingProfile` é chamada de todos os caminhos que
+podem ter acabado de deixar a view pronta: `onLoaded`, `onTabChanged` e a
+abertura.
+
 ## Ferramentas: cuidado com falso negativo
 
+- **Glifo de Nerd Font não se adivinha.** Já custou três chutes errados neste
+  projeto. Consulte a cmap da fonte antes:
+  ```python
+  from fontTools.ttLib import TTFont
+  cmap = TTFont('/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf').getBestCmap()
+  print(0xF0493 in cmap)   # md-cog, o da aba de settings
+  ```
+  E confira os bytes depois de escrever: o glifo da engrenagem chegou ao arquivo
+  como string **vazia** na primeira tentativa (o heredoc o engoliu), e o chip
+  apareceu em branco sem erro nenhum no journal.
 - **`qmlformat` e `qmllint` não parseiam `function f(): void`** nesta build do
   Qt. Todo arquivo QML com um `IpcHandler` tipado dá `rc=1` e
   `Unexpected token 'void'`. Isso vale também para plugins de primeira parte do
@@ -186,7 +260,10 @@ tests/test_ditto.py           # o easter egg: disfarce, shiny escondido, revela�
 tests/test_dex.mjs            # projeção do Pokédex, ownsSpecies, 2×
 tests/test_shop.mjs           # lista da loja, bag, humor, tooltip
 tests/test_resilience.py      # falha de rede no meio das operações
+tests/test_details.py         # dados de espécie: normalização, cache, fallback REST
+tests/test_profile.mjs        # IVs, gênero, habilidade, nível, stats, golpes
 bin/omapkdex-sync index           # reconstrói o índice (deve dar 329 espécies base)
+bin/omapkdex-sync details 341     # baixa e cacheia os dados de espécie do perfil
 bin/omapkdex-sync hatch           # sorteia e baixa sprites
 omarchy restart shell         # única forma confiável de testar QML novo
 ```

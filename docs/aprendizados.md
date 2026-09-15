@@ -348,3 +348,132 @@ A divisão que funcionou: eu fiz o que dá para automatizar e verificar
 (cruzamento de constantes, propriedades órfãs, simulação de cenário), a revisão
 fez o que exige ler o código sem saber o que ele deveria fazer. Nenhuma das duas
 teria achado tudo.
+
+## 18. O estado derivado de um parâmetro que vive fora dele
+
+`tokensIntoStage` é um número absoluto de tokens; o limiar é derivado da
+dificuldade, que mora no `shell.json` e muda por fora. Ninguém guardava a
+dificuldade usada — então baixá-la encolhia o limiar por baixo do progresso já
+acumulado, e o próximo delta **graduava o Pokémon de graça**. Medido: 240M
+contra limiares de 75M+150M cobre a linha inteira de uma vez.
+
+O bug existia desde o começo, e não em código novo: ele só ficou visível quando
+fui construir a aba que expõe o parâmetro. Uma feature que dá acesso fácil a um
+botão revela o que acontece quando o botão é apertado — que ninguém tinha
+apertado ainda.
+
+**A lição:** quando um estado persistido é interpretado à luz de um parâmetro
+que não está persistido com ele, o par está quebrado por construção. Ou se
+guarda o parâmetro junto (foi o conserto: `state.difficulty`, e reescala quando
+muda), ou se persiste o estado numa unidade que não dependa dele. Vale procurar
+esse padrão antes de expor o parâmetro: `grep` por quem lê a setting e por onde
+o número derivado é comparado.
+
+E um detalhe do reescalonamento que parece preciosismo e não é: **arredondar não
+pode completar um estágio**. A um token do limiar antigo, a proporção cai
+exatamente sobre o novo, e o reescalonamento entregaria a evolução que ele
+existe para evitar.
+
+## 19. Projeção em vez de migração
+
+O perfil do indivíduo (IVs, gênero, habilidade, nível) parecia exigir campos
+novos em cada Pokémon salvo — e, portanto, um backfill para os que já existiam.
+Não exigiu: tudo sai de um PRNG semeado pelo `companionId`, que já estava lá, e
+o nível é a fração do crescimento. Zero migração, zero arquivo novo, e os bichos
+antigos ganharam perfil retroativo.
+
+É a mesma decisão que o Pokédex já usava (projeção sobre o catch log) aplicada um
+nível abaixo. Vale perguntar, antes de adicionar campo: **isto é dado ou é
+função do dado que já tenho?**
+
+O contra-exemplo está no mesmo commit: a **natureza** não pode sair de um seed,
+porque o Mint a re-sorteia. Ela é mutável, logo é dado, logo é gravada. A
+fronteira é exatamente essa — o que muda por ação da pessoa é estado; o que é
+fixo desde o nascimento é função do id.
+
+O preço da projeção é que o seed passa a ser uma promessa permanente: se
+`seedFor` mudar, os IVs do bicho de alguém mudam sozinhos. Por isso é FNV-1a
+(especificada) e não o hash da linguagem — o original tropeçou nisso em Swift,
+onde `Hasher` é aleatório por processo.
+
+## 20. Dois consertos para um laço, e os dois eram necessários
+
+`FileView.onLoadFailed` dispara o helper que cria o arquivo: é o gatilho normal
+da primeira abertura de uma espécie. Mas o helper saía com 0 sem escrever nada
+(usava `os.path.exists` para o cache, e um **diretório** com o nome do arquivo
+satisfazia a checagem), então o FileView recarregava, falhava, disparava o
+helper de novo — laço infinito de processos.
+
+Consertar só o helper resolveria o caso que eu tinha em mãos. Mas o laço é do
+formato "quem repara não consegue reparar", e ele voltaria com disco cheio,
+permissão errada ou JSON truncado. Então o conserto é dos dois lados:
+`os.path.isfile` no helper, e **uma** tentativa automática por espécie no
+widget, com o botão de tentar de novo rearmando.
+
+**A lição:** quando A conserta B e B redispara A, o limite de tentativas é parte
+do desenho, não uma defesa extra. E vale procurar esse par sempre que um
+`onLoadFailed` chama um processo.
+
+## 21. Verificar o que não dá para clicar
+
+A grade do Pokédex só responde a clique, e não há como sintetizar clique no
+Wayland daqui (`wtype` manda tecla, não botão; `ydotool` exige `/dev/uinput` e
+root). O caminho foi expor a navegação por IPC — `profile` e `profileOf <n>` —
+que é atalho útil de verdade **e** a única forma de dirigir a tela de fora.
+
+E foi aí que apareceu um bug que clique nenhum teria mostrado facilmente: o
+pedido era aplicado só no `onLoaded` do `Loader` da aba, e reabrir o painel na
+aba em que ele já estava não troca o `sourceComponent` — o Loader não recarrega,
+o `onLoaded` não dispara, e o comando parecia não fazer nada. Sempre na segunda
+vez seguida.
+
+**A lição:** tornar a UI dirigível de fora não é andaime de teste, é feature que
+paga o próprio custo. Mas a verificação tem de ser honesta sobre o que ela não
+cobre: o `TapHandler` em si continua verificado só por padrão (é o mesmo dos
+chips de aba, que funcionam na captura).
+
+## 22. A checagem que informa não é a checagem que protege
+
+Eu já tinha uma forma de saber se o popout estava aberto antes de capturar a
+tela — a camada `omarchy-keyboard-panel` só existe enquanto ele está. Usei-a,
+ela imprimiu `aberto: 0`... e o script capturou a tela mesmo assim, porque o
+`grim` vinha na linha seguinte do mesmo bloco. Resultado: a área de trabalho do
+Heitor num arquivo, de novo, pelo segundo motivo diferente.
+
+**A lição:** uma pré-condição que só imprime não é pré-condição. Ela tem de
+**abortar** — virou um script com `exit 3` que espera a camada aparecer e, se
+ela não aparece, não chama o `grim`. Impossível esquecer de olhar o resultado,
+porque não existe resultado.
+
+## 23. README é interface, e interface se olha renderizada
+
+Escrevi a página com tabelas HTML de duas colunas e sprites animados e ia
+entregar sem ver. Renderizei pela API do GitHub (`gh api /markdown`) num HTML
+com o `github-markdown-css` e fotografei com o Chromium headless — e as três
+coisas que estavam erradas só apareciam ali: as linhas da tabela ficavam
+gigantes (um print de 810px ao lado de um parágrafo de 3 linhas), os sprites em
+sequência não alinhavam (imagem inline alinha pela base do texto, não pelo
+centro), e o cabeçalho de tabela vazio (`| | |`) desenhava uma faixa em branco
+com borda que parecia defeito.
+
+Uma armadilha no meio do caminho: **o modo importa**. `mode=gfm` é a semântica
+de comentário — converte cada quebra de linha do fonte em `<br>`, e eu "consertei"
+parágrafos que não estavam quebrados. `mode=markdown` é a de arquivo, que é como
+o README aparece no repositório. Os alertas (`> [!IMPORTANT]`) são o inverso:
+saem só no `gfm` e no github.com, não no `markdown`. A verdade é a união dos
+dois renders.
+
+## 24. Medir o recorte, não deduzi-lo
+
+As capturas do painel saíam assimétricas: borda visível na direita, nenhuma na
+esquerda. Eu tinha deduzido a posição do card de uma captura antiga (`x=1355`) e
+estava 5px dentro dele — cortando fora a borda esquerda.
+
+Medir foi trivial e eu não tinha feito: varrer as colunas da captura procurando
+a que é clara em quase toda a altura acha as duas bordas de uma vez (`x=1350` e
+`x=1891`, 3px cada). Com os dois limites medidos e o topo/fundo detectados por
+linha, o recorte fica exato em qualquer aba, e a altura deixa de ser um chute que
+às vezes corta conteúdo e às vezes pega papel de parede.
+
+**A lição:** um número que veio de "pareceu certo naquela vez" merece uma
+medição de trinta segundos antes de virar constante em sete arquivos.

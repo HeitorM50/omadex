@@ -12,6 +12,11 @@ The screenshots under `docs/screenshots/` and `preview.png` are captures of this
 plugin's own interface. Some of them show sprite artwork rendered inside it,
 which remains the property of the rights holders named below.
 
+The animated sprites in `README.md` are **not** copies either: they are
+`<img>` references to PokéAPI's own sprite repository, loaded by the browser
+when the page is viewed — the same source, and the same arrangement, that the
+plugin uses at runtime.
+
 ## PokéAPI
 
 Species, evolution chains, and capture rates are fetched at runtime from
